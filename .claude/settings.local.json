@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof:*)",
+      "Bash(perl:*)",
+      "Bash(awk:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(node:*)",
+      "Bash(lsof -ti:3000 | xargs kill -9 2>/dev/null; sleep 1; echo \"端口已清理\")",
+      "Bash(\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --version 2>&1)",
+      "Bash(pkill -f \"node.*server.js\" 2>/dev/null; sleep 1; npm start)",
+      "Bash(git checkout 3b30edb -- ./public/index.html)",
+      "Bash(git reset --hard 3b30edb)",
+      "Bash(curl -s http://localhost:3000/api/auto-sync-auth -X POST 2>&1 | head -20)",
+      "Bash(git reset --hard 4bb9458)",
+      "Bash(ls -la public/app.js* | head -5)",
+      "Bash(pkill -f \"node.*server.js\" 2>/dev/null; sleep 1; PORT=3000 npm start)",
+      "Bash(find . -name \"*.bak*\" -o -name \"*~\" -o -name \"*.tmp\" 2>/dev/null | head -20)",
+      "Bash(git reset --hard ef16d58)",
+      "Bash(find . -name \".*.swp\" -o -name \".DS_Store*\" -o -name \"*~\" 2>/dev/null | head -10)",
+      "Bash(tmutil listlocalsnapshots / 2>/dev/null | head -5 || echo \"Time Machine 快照需要管理员权限\")"
+    ]
+  }
+}
