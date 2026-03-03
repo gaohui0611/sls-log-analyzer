@@ -7,14 +7,14 @@ import axios from 'axios';
 /**
  * 调用 AI 分析日志
  */
-export async function callAI(logs, query, timeInfo, aiConfig) {
+export async function callAI(logs, query, timeInfo, aiConfig, customPrompt = '') {
     const { provider, apiKey, baseUrl, model } = aiConfig;
 
     // 准备日志摘要
     const logSummary = prepareLogSummary(logs, query);
 
-    // 构建提示词
-    const prompt = buildPrompt(logSummary, query, timeInfo);
+    // 构建提示词（支持自定义prompt）
+    const prompt = buildPrompt(logSummary, query, timeInfo, customPrompt);
 
     switch (provider) {
         case 'anthropic':
@@ -47,28 +47,34 @@ function prepareLogSummary(logs, query) {
         const level = (log.level || log.LEVEL || 'INFO').toUpperCase();
         // SLS 日志使用 content 字段
         const message = log.content || log.message || log.msg || '';
+        const traceId = log.TID || log.traceId || log.trace_id || '';
+        const userId = log.userId || log.user_id || '';
 
         // 收集错误
         if (level === 'ERROR' || message.includes('Exception')) {
             summary.errors.push({
                 level,
-                message: message.substring(0, 300)
+                message: message.substring(0, 300),
+                time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null
             });
         }
 
         // 收集警告
         if (level === 'WARN') {
             summary.warnings.push({
-                message: message.substring(0, 300)
+                message: message.substring(0, 300),
+                time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null
             });
         }
 
-        // 收集样本日志
+        // 收集样本日志（包含更多详情）
         if (summary.sampleLogs.length < 10) {
             summary.sampleLogs.push({
                 time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null,
                 level,
-                message: message.substring(0, 500)
+                message: message.substring(0, 500),
+                traceId,
+                userId
             });
         }
     }
@@ -79,8 +85,9 @@ function prepareLogSummary(logs, query) {
 /**
  * 构建 AI 提示词
  */
-function buildPrompt(logSummary, query, timeInfo) {
-    return `你是一个专业的日志分析专家。请分析以下日志数据并提供洞察。
+function buildPrompt(logSummary, query, timeInfo, customPrompt = '') {
+    // 基础信息部分
+    let prompt = `你是一个专业的日志分析专家。请分析以下日志数据并提供洞察。
 
 ## 查询信息
 - 查询关键词: ${query || '(全部日志)'}
@@ -98,18 +105,41 @@ ${logSummary.errors.length > 0 ? logSummary.errors.map((e, i) => `${i + 1}. [${e
 ## 警告详情
 ${logSummary.warnings.length > 0 ? logSummary.warnings.map((w, i) => `${i + 1}. ${w.message}`).join('\n') : '(无警告)'}
 
-## 样本日志
-${logSummary.sampleLogs.map((l, i) => `[${l.time}] [${l.level}] ${l.message}`).join('\n---\n')}
+## 样本日志（分析依据）
+${logSummary.sampleLogs.map((l, i) => `
+### 日志 ${i + 1}
+- 时间: ${l.time}
+- 级别: ${l.level}
+- 内容: ${l.message}
+${l.traceId ? `- TraceID: ${l.traceId}` : ''}
+${l.userId ? `- UserID: ${l.userId}` : ''}
+`).join('\n')}
+
+`;
+
+    // 如果有自定义prompt，使用自定义的分析要求
+    if (customPrompt && customPrompt.trim()) {
+        prompt += `\n## 分析要求\n${customPrompt.trim()}\n`;
+    } else {
+        // 默认分析要求
+        prompt += `
+## 分析要求
 
 请提供以下分析:
 
-1. **问题诊断**: 基于日志内容，识别主要问题和异常
-2. **根因分析**: 分析可能的根本原因
+1. **问题诊断**: 基于日志内容，识别主要问题和异常（包括错误、警告、逻辑问题等）
+2. **根因分析**: 分析可能的根本原因，考虑业务逻辑、系统配置、数据问题等多个维度
 3. **影响评估**: 评估问题的影响范围和严重程度
 4. **解决建议**: 提供具体的排查步骤和解决方案
 5. **预防措施**: 建议如何避免类似问题再次发生
 
-请以 Markdown 格式输出，使用清晰的标题和列表。`;
+注意：不仅关注错误日志，也要分析业务逻辑问题、性能问题、异常行为等。
+`;
+    }
+
+    prompt += `\n请以 Markdown 格式输出，使用清晰的标题和列表。`;
+
+    return prompt;
 }
 
 /**

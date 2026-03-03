@@ -100,8 +100,9 @@ router.post('/config', async (req, res) => {
 router.post('/analyze', async (req, res) => {
     try {
         console.log('[DEBUG] 收到分析请求');
-        const { projectId, timeRange, query, size = 100 } = req.body;
+        const { projectId, timeRange, query, size = 100, customPrompt = '' } = req.body;
         console.log('[DEBUG] 项目 ID:', projectId);
+        console.log('[DEBUG] 自定义Prompt:', customPrompt ? '有' : '无');
 
         if (!projectId) {
             return res.status(400).json({ success: false, error: '缺少项目 ID' });
@@ -137,7 +138,8 @@ router.post('/analyze', async (req, res) => {
             timeRange,
             query,
             size,
-            aiConfig: config.aiConfig
+            aiConfig: config.aiConfig,
+            customPrompt // 传递自定义prompt
         });
         console.log('[DEBUG] 分析完成');
 

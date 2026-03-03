@@ -41,10 +41,11 @@ export async function analyzeLogs(params) {
         timeRange = 'thisWeek',
         query = '',
         size = 100,
-        aiConfig
+        aiConfig,
+        customPrompt = '' // 新增：自定义prompt
     } = params;
 
-    console.log('[analyzer] 参数:', { projectName, logStoreName, timeRange, query, size });
+    console.log('[analyzer] 参数:', { projectName, logStoreName, timeRange, query, size, hasCustomPrompt: !!customPrompt });
 
     // 读取全局配置获取 SLS 认证信息
     const config = await readConfig();
@@ -89,7 +90,7 @@ export async function analyzeLogs(params) {
             );
 
             aiAnalysis = await Promise.race([
-                callAI(searchResult.logs, query, timeInfo, aiConfig),
+                callAI(searchResult.logs, query, timeInfo, aiConfig, customPrompt),
                 timeoutPromise
             ]);
             console.log('[analyzer] AI 分析完成');

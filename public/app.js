@@ -252,6 +252,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
     const timeRange = document.getElementById('timeRangeSelect').value;
     const query = document.getElementById('queryInput').value.trim();
     const size = parseInt(document.getElementById('sizeSelect').value);
+    const customPrompt = document.getElementById('customPromptInput')?.value.trim() || ''; // 获取自定义prompt
 
     if (!projectId) {
         showAlert('analyze-tab', '请先选择一个项目', 'error');
@@ -264,7 +265,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
     try {
         const response = await apiRequest('/analyze', {
             method: 'POST',
-            body: JSON.stringify({ projectId, timeRange, query, size })
+            body: JSON.stringify({ projectId, timeRange, query, size, customPrompt }) // 传递自定义prompt
         });
 
         renderAnalysisResult(response.data);
@@ -373,6 +374,43 @@ function renderAnalysisResult(data) {
       <div class="card">
         <h3>🤖 AI 智能分析</h3>
         <div class="markdown-content">${renderMarkdown(data.aiAnalysis.content)}</div>
+      </div>
+    `;
+    }
+
+    // 分析依据的日志详情
+    if (data.logs && data.logs.length > 0) {
+        html += `
+      <div class="card">
+        <h3>📋 分析依据日志详情 (前10条)</h3>
+        <div style="max-height: 500px; overflow-y: auto;">
+    `;
+        data.logs.slice(0, 10).forEach((log, index) => {
+            const level = (log.level || log.LEVEL || 'INFO').toUpperCase();
+            const message = log.content || log.message || log.msg || '';
+            const time = log.__time__ ? new Date(log.__time__ * 1000).toLocaleString('zh-CN') : '-';
+            const traceId = log.TID || log.traceId || log.trace_id || '';
+            const userId = log.userId || log.user_id || '';
+            
+            html += `
+          <div class="log-entry ${level.toLowerCase()}" style="margin-bottom: 12px; padding: 12px; background: var(--apple-gray-6); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+              <span style="font-weight: 600;">日志 #${index + 1}</span>
+              <span class="tag tag-${level.toLowerCase()}">${level}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--apple-text-secondary); margin-bottom: 4px;">
+              🕐 ${time}
+            </div>
+            ${traceId ? `<div style="font-size: 12px; color: var(--apple-text-secondary); margin-bottom: 4px;">🔗 TraceID: ${traceId}</div>` : ''}
+            ${userId ? `<div style="font-size: 12px; color: var(--apple-text-secondary); margin-bottom: 4px;">👤 UserID: ${userId}</div>` : ''}
+            <div style="margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.03); border-radius: 4px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all;">
+              ${escapeHtml(message)}
+            </div>
+          </div>
+        `;
+        });
+        html += `
+        </div>
       </div>
     `;
     }

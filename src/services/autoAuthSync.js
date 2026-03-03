@@ -38,17 +38,69 @@ async function extractAuthInfo(region = 'cn-beijing') {
     try {
         console.log('启动浏览器...');
 
-        // 启动非无头浏览器，用户可以看到登录过程
-        browser = await puppeteer.launch({
+        // 浏览器启动配置
+        const launchOptions = {
             headless: false,
             defaultViewport: { width: 1280, height: 800 },
             args: [
                 '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
-        });
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled', // 隐藏自动化特征
+                '--disable-extensions', // 禁用扩展（包括广告拦截器）
+                '--disable-plugins',
+                '--disable-web-security', // 禁用web安全检查
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--allow-running-insecure-content',
+                '--no-first-run',
+                '--no-default-browser-check'
+            ],
+            ignoreDefaultArgs: ['--enable-automation'], // 移除自动化标识
+        };
+
+        // 在 Windows/Mac 上尝试常见的 Chrome 路径
+        if (process.platform === 'win32') {
+            const possiblePaths = [
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+                process.env.PROGRAMFILES + '\\Google\\Chrome\\Application\\chrome.exe',
+                process.env['PROGRAMFILES(X86)'] + '\\Google\\Chrome\\Application\\chrome.exe'
+            ];
+
+            for (const chromePath of possiblePaths) {
+                try {
+                    const fs = await import('fs');
+                    if (fs.existsSync(chromePath)) {
+                        launchOptions.executablePath = chromePath;
+                        console.log('找到 Chrome:', chromePath);
+                        break;
+                    }
+                } catch (err) {
+                    // 继续尝试下一个路径
+                }
+            }
+        } else if (process.platform === 'darwin') {
+            // macOS Chrome 路径
+            const macPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+            try {
+                const fs = await import('fs');
+                if (fs.existsSync(macPath)) {
+                    launchOptions.executablePath = macPath;
+                    console.log('找到 Chrome:', macPath);
+                }
+            } catch (err) {
+                // 使用默认路径
+            }
+        }
+
+        // 启动浏览器
+        browser = await puppeteer.launch(launchOptions);
 
         const page = await browser.newPage();
+
+        // 设置User-Agent，模拟真实浏览器
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
         // 存储认证信息
         const authData = {
@@ -87,7 +139,20 @@ async function extractAuthInfo(region = 'cn-beijing') {
         });
 
         console.log('导航到 SLS 控制台...');
-        await page.goto(slsUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        try {
+            await page.goto(slsUrl, { 
+                waitUntil: 'networkidle2', 
+                timeout: 60000 
+            });
+        } catch (navError) {
+            // 如果导航失败，尝试使用更宽松的等待条件
+            console.log('首次导航失败，尝试使用宽松模式...');
+            await page.goto(slsUrl, { 
+                waitUntil: 'domcontentloaded', 
+                timeout: 60000 
+            });
+        }
 
         console.log('');
         console.log('========================================');
@@ -230,6 +295,22 @@ export async function autoSyncAuth(region = 'cn-beijing') {
         console.error('自动同步失败:', error.message);
         console.error('========================================');
         console.error('');
-        throw error;
+
+        // 提供更友好的错误信息
+        let userMessage = error.message;
+        
+        if (error.message.includes('ERR_BLOCKED_BY_CLIENT')) {
+            userMessage = '浏览器扩展（如广告拦截器）阻止了页面加载。\n\n解决方案：\n1. 关闭浏览器的广告拦截扩展后重试\n2. 或使用下方的"cURL 手动同步"方式（推荐）';
+        } else if (error.message.includes('Could not find') || 
+            error.message.includes('Failed to launch') ||
+            error.message.includes('chrome')) {
+            userMessage = 'Chrome 浏览器未安装或路径配置错误。\n\n解决方案：\n1. 安装 Google Chrome 浏览器\n2. 或使用下方的"cURL 手动同步"方式（推荐）';
+        } else if (error.message.includes('timeout')) {
+            userMessage = '操作超时，请重试或使用手动同步方式';
+        } else if (error.message.includes('Navigation') || error.message.includes('navigate')) {
+            userMessage = '页面导航失败，可能是网络问题或浏览器扩展干扰。\n\n解决方案：\n1. 检查网络连接\n2. 关闭浏览器扩展（特别是广告拦截器）\n3. 或使用下方的"cURL 手动同步"方式（推荐）';
+        }
+
+        throw new Error(userMessage);
     }
 }
