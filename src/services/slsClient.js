@@ -19,6 +19,40 @@ function formatCookieHeader(cookies) {
 }
 
 /**
+ * 延迟函数
+ */
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * 带重试的请求函数
+ */
+async function requestWithRetry(requestFn, maxRetries = 2) {
+    let lastError;
+    
+    for (let i = 0; i <= maxRetries; i++) {
+        try {
+            return await requestFn();
+        } catch (error) {
+            lastError = error;
+            
+            // 如果是连接重置或中断，且还有重试次数，则重试
+            if ((error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') && i < maxRetries) {
+                console.log(`[SLS Client] 连接中断，${i + 1}/${maxRetries} 次重试...`);
+                await delay(1000 * (i + 1)); // 递增延迟：1s, 2s
+                continue;
+            }
+            
+            // 其他错误直接抛出
+            throw error;
+        }
+    }
+    
+    throw lastError;
+}
+
+/**
  * 搜索日志
  */
 export async function searchLogs(params, slsConfig) {
@@ -50,7 +84,8 @@ export async function searchLogs(params, slsConfig) {
         headers['b3'] = slsConfig.b3;
     }
 
-    try {
+    // 使用重试机制执行请求
+    return await requestWithRetry(async () => {
         // 构建完整的 API URL
         const apiUrl = `${SLS_API_BASE}/getLogs.json`;
 
@@ -93,13 +128,19 @@ export async function searchLogs(params, slsConfig) {
             logs,
             raw: response.data
         };
-
-    } catch (error) {
+    }, 2).catch(error => {
+        // 处理连接重置错误
+        if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
+            throw new Error('网络连接被中断，可能是认证信息已过期或网络不稳定，请重新同步认证信息');
+        }
         if (error.response?.status === 401) {
             throw new Error('认证失败，请重新同步认证信息');
         }
         if (error.response?.status === 403) {
             throw new Error('没有权限访问该日志库');
+        }
+        if (error.code === 'ETIMEDOUT') {
+            throw new Error('请求超时，请检查网络连接或稍后重试');
         }
         throw error;
     }
