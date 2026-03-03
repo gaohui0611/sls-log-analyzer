@@ -147,6 +147,9 @@ ${l.userId ? `- UserID: ${l.userId}` : ''}
  */
 async function callAnthropic(prompt, apiKey, baseUrl, model) {
     const url = baseUrl || 'https://api.anthropic.com/v1/messages';
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     try {
         const response = await axios.post(url, {
@@ -159,7 +162,7 @@ async function callAnthropic(prompt, apiKey, baseUrl, model) {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': apiKey,
+                'x-api-key': cleanApiKey,
                 'anthropic-version': '2023-06-01'
             },
             timeout: 120000
@@ -187,6 +190,9 @@ async function callAnthropic(prompt, apiKey, baseUrl, model) {
  */
 async function callOpenAI(prompt, apiKey, baseUrl, model) {
     const url = `${baseUrl || 'https://api.openai.com'}/v1/chat/completions`;
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     try {
         const response = await axios.post(url, {
@@ -199,7 +205,7 @@ async function callOpenAI(prompt, apiKey, baseUrl, model) {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
+                'Authorization': `Bearer ${cleanApiKey}`
             },
             timeout: 120000
         });
@@ -232,6 +238,9 @@ async function callOpenAICompatible(prompt, apiKey, baseUrl, model) {
     // 智能处理 URL：确保末尾没有斜杠，然后拼接路径
     const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     const url = `${cleanBaseUrl}/chat/completions`;
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     try {
         const response = await axios.post(url, {
@@ -244,7 +253,7 @@ async function callOpenAICompatible(prompt, apiKey, baseUrl, model) {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
+                'Authorization': `Bearer ${cleanApiKey}`
             },
             timeout: 120000
         });
@@ -294,6 +303,9 @@ export async function testAIConnection(config) {
  */
 async function testAnthropic(prompt, apiKey, baseUrl, model) {
     const url = baseUrl || 'https://api.anthropic.com/v1/messages';
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     try {
         const response = await axios.post(url, {
@@ -306,7 +318,7 @@ async function testAnthropic(prompt, apiKey, baseUrl, model) {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'x-api-key': apiKey,
+                'x-api-key': cleanApiKey,
                 'anthropic-version': '2023-06-01'
             },
             timeout: 30000
@@ -329,6 +341,9 @@ async function testAnthropic(prompt, apiKey, baseUrl, model) {
  */
 async function testOpenAI(prompt, apiKey, baseUrl, model) {
     const url = `${baseUrl || 'https://api.openai.com'}/v1/chat/completions`;
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     try {
         const response = await axios.post(url, {
@@ -341,7 +356,7 @@ async function testOpenAI(prompt, apiKey, baseUrl, model) {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
+                'Authorization': `Bearer ${cleanApiKey}`
             },
             timeout: 30000
         });
@@ -365,6 +380,9 @@ async function testOpenAICompatible(prompt, apiKey, baseUrl, model) {
     // 智能处理 URL：确保末尾没有斜杠，然后拼接路径
     const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     const url = `${cleanBaseUrl}/chat/completions`;
+    
+    // 清理 API Key，移除可能的空格和换行符
+    const cleanApiKey = apiKey.trim();
 
     const requestBody = {
         model: model || 'default',
@@ -376,14 +394,14 @@ async function testOpenAICompatible(prompt, apiKey, baseUrl, model) {
 
     console.log('[AI Test] Request URL:', url);
     console.log('[AI Test] Model:', model);
-    console.log('[AI Test] API Key prefix:', apiKey.substring(0, 10) + '...');
+    console.log('[AI Test] API Key prefix:', cleanApiKey.substring(0, 10) + '...');
     console.log('[AI Test] Request body:', JSON.stringify(requestBody, null, 2));
 
     try {
         const response = await axios.post(url, requestBody, {
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
+                'Authorization': `Bearer ${cleanApiKey}`
             },
             timeout: 30000
         });
