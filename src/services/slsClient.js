@@ -143,5 +143,5 @@ export async function searchLogs(params, slsConfig) {
             throw new Error('请求超时，请检查网络连接或稍后重试');
         }
         throw error;
-    }
+    });
 }
