@@ -287,16 +287,46 @@ window.deleteProject = async function(id) {
 
 // ========== 日志分析 ==========
 
+/**
+ * 智能处理SLS查询字符串
+ * 如果包含特殊字符且没有用引号包裹，自动添加引号
+ */
+function sanitizeSlsQuery(query) {
+    if (!query) return query;
+    
+    // 如果已经用引号包裹，直接返回
+    if ((query.startsWith('"') && query.endsWith('"')) || 
+        (query.startsWith("'") && query.endsWith("'"))) {
+        return query;
+    }
+    
+    // 检查是否包含SLS特殊字符: : . ( ) [ ] { } * ? + | \ / 等
+    const specialChars = /[:.()\[\]{}*?+|\\\/]/;
+    if (specialChars.test(query)) {
+        // 自动用双引号包裹
+        return `"${query}"`;
+    }
+    
+    return query;
+}
+
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
     const projectId = document.getElementById('projectSelect').value;
     const timeRange = document.getElementById('timeRangeSelect').value;
-    const query = document.getElementById('queryInput').value.trim();
+    let query = document.getElementById('queryInput').value.trim();
     const size = parseInt(document.getElementById('sizeSelect').value);
     const customPrompt = document.getElementById('customPromptInput')?.value.trim() || ''; // 获取自定义prompt
 
     if (!projectId) {
-        showAlert('analyze-tab', '请先选择一个项目', 'error');
+        showToast('请先选择一个项目', 'error');
         return;
+    }
+
+    // 智能处理查询字符串
+    const originalQuery = query;
+    query = sanitizeSlsQuery(query);
+    if (query !== originalQuery && query) {
+        showToast(`查询已优化为: ${query}`, 'info', 3000);
     }
 
     showLoading('analyzeLoading');
@@ -310,7 +340,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
 
         renderAnalysisResult(response.data);
     } catch (error) {
-        showAlert('analyze-tab', `❌ 分析失败: ${error.message}`, 'error');
+        showToast(`分析失败: ${error.message}`, 'error');
     } finally {
         hideLoading('analyzeLoading');
     }

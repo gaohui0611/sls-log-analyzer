@@ -276,6 +276,21 @@
       font-size: 12px;
       color: #86868B;
       margin-top: 6px;
+      line-height: 1.6;
+    }
+
+    .form-hint code {
+      background: rgba(0, 0, 0, 0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #1D1D1F;
+    }
+
+    .form-hint strong {
+      color: #1D1D1F;
+      font-weight: 600;
     }
 
     /* 按钮 */
@@ -1392,7 +1407,12 @@
           </div>
           <div class="form-group">
             <label class="form-label">查询关键词 (可选)</label>
-            <input type="text" class="form-input" id="queryInput" placeholder="例如: TID_xxxxx, ERROR, userId 等">
+            <input type="text" class="form-input" id="queryInput" placeholder='例如: ERROR, "java.lang.Exception", userId:12345'>
+            <p class="form-hint">
+              💡 提示：支持SLS查询语法。
+              <strong>包含特殊字符时请用双引号包裹</strong>，如 <code>"java.util.concurrent.ExecutionException"</code>。
+              <a href="https://help.aliyun.com/document_detail/29060.html" target="_blank" style="color: #007AFF;">查看语法文档</a>
+            </p>
           </div>
           <div class="form-group">
             <label class="form-label">自定义分析提示词 (可选)</label>
