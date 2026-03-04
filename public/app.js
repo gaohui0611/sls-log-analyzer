@@ -24,21 +24,61 @@ function hideLoading(elementId) {
     document.getElementById(elementId).classList.remove('active');
 }
 
-function showAlert(elementId, message, type = 'info') {
-    const container = document.getElementById(elementId);
+/**
+ * 显示Toast通知（弹出框消息）
+ * @param {string} message - 消息内容
+ * @param {string} type - 类型: success, error, info, warning
+ * @param {number} duration - 显示时长（毫秒），默认4000ms
+ */
+function showToast(message, type = 'info', duration = 4000) {
+    const container = document.getElementById('toastContainer');
     if (!container) return;
 
-    // 在容器开头插入提示，而不是替换整个内容
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type}`;
-    alertDiv.innerHTML = message;
-    alertDiv.style.cssText = 'margin-bottom: 16px;';
+    // 图标映射
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+    };
 
-    container.insertBefore(alertDiv, container.firstChild);
+    // 标题映射
+    const titles = {
+        success: '成功',
+        error: '错误',
+        info: '提示',
+        warning: '警告'
+    };
 
+    // 创建Toast元素
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || 'ℹ️'}</div>
+        <div class="toast-content">
+            <div class="toast-title">${titles[type] || '提示'}</div>
+            <div class="toast-message">${message}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    `;
+
+    // 添加到容器
+    container.appendChild(toast);
+
+    // 自动移除
     setTimeout(() => {
-        if (alertDiv) alertDiv.remove();
-    }, 5000);
+        toast.classList.add('removing');
+        setTimeout(() => {
+            if (toast.parentElement) {
+                toast.remove();
+            }
+        }, 300);
+    }, duration);
+}
+
+// 保留旧的showAlert函数以兼容性（但内部使用showToast）
+function showAlert(elementId, message, type = 'info') {
+    showToast(message, type);
 }
 
 // API 调用
@@ -802,7 +842,7 @@ document.getElementById('testAiConfigQuick')?.addEventListener('click', async ()
             </div>
         `;
     } catch (error) {
-        aiConfigDisplay.innerHTML = `<div style="color: var(--apple-red);">❌ 测试失败: ${error.message}</div>`;
+        showToast(`测试失败: ${error.message}`, 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -907,12 +947,12 @@ window.saveEditAiConfig = async function() {
         `;
 
         // 显示成功状态
-        resultEl.innerHTML = '<div style="padding: 12px; background: #d4edda; color: #155724; border-radius: 8px;">✅ 配置已保存</div>';
+        showToast('AI 配置已保存', 'success');
 
         // 延迟关闭模态框
         setTimeout(() => closeEditAiModal(), 1500);
     } catch (error) {
-        resultEl.innerHTML = `<div style="padding: 12px; background: #f8d7da; color: #721c24; border-radius: 8px;">❌ 保存失败: ${error.message}</div>`;
+        showToast(`保存失败: ${error.message}`, 'error');
     }
 }
 
@@ -952,8 +992,10 @@ window.testEditAiConfig = async function() {
 
         const data = response.data;
         const responseText = data.response || '';
+        showToast(`测试成功！模型: ${data.model}`, 'success');
         resultEl.innerHTML = `<div style="padding: 12px; background: #d4edda; color: #155724; border-radius: 8px;">✅ 测试成功！<br><span style="font-size: 13px;">模型: ${data.model} | 响应: ${responseText.substring(0, 40)}${responseText.length > 40 ? '...' : ''}</span></div>`;
     } catch (error) {
+        showToast(`测试失败: ${error.message}`, 'error');
         resultEl.innerHTML = `<div style="padding: 12px; background: #f8d7da; color: #721c24; border-radius: 8px;">❌ 测试失败: ${error.message}</div>`;
     }
 }
