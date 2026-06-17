@@ -6,46 +6,32 @@ import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { callAI } from './aiService.js';
-import { searchLogs } from './slsClient.js';
+import { searchLogsMultiPage } from './slsClient.js';
 import { parseTimeRange } from './timeParser.js';
 
+import { readConfig } from '../utils/config.js';
+
 const REPORTS_DIR = path.join(process.cwd(), 'reports');
-const CONFIG_FILE = path.join(process.cwd(), 'config.json');
 
 /**
- * 读取配置
- */
-async function readConfig() {
-    try {
-        const data = await fs.readFile(CONFIG_FILE, 'utf-8');
-        return JSON.parse(data);
-    } catch {
-        return {
-            projects: {},
-            aiConfig: {},
-            slsConfig: {
-                region: 'cn-beijing'
-            }
-        };
-    }
-}
-
-/**
- * 分析日志
+ * 分析日志 — 多阶段流水线
+ * 阶段1: 广泛查询（用户关键词 + 多页翻页）→ 统计概览
+ * 阶段2（条件触发）: 精准二次检索（level:ERROR OR level:WARN）→ 合并去重
+ * 阶段3: AI 分析（合并后的日志集）
  */
 export async function analyzeLogs(params) {
-    console.log('[analyzer] 开始分析');
     const {
         projectName,
         logStoreName,
         timeRange = 'thisWeek',
         query = '',
         size = 100,
+        maxPages = 1,
         aiConfig,
-        customPrompt = '' // 新增：自定义prompt
+        customPrompt = ''
     } = params;
 
-    console.log('[analyzer] 参数:', { projectName, logStoreName, timeRange, query, size, hasCustomPrompt: !!customPrompt });
+    const searchPhases = [];
 
     // 读取全局配置获取 SLS 认证信息
     const config = await readConfig();
@@ -53,47 +39,89 @@ export async function analyzeLogs(params) {
 
     // 解析时间范围
     const timeInfo = parseTimeRange(timeRange);
-    console.log('[analyzer] 时间范围:', timeInfo);
 
-    // 搜索日志
-    console.log('[analyzer] 开始搜索日志...');
-    const searchResult = await searchLogs({
-        projectName,
-        logStoreName,
-        query,
-        from: timeInfo.from,
-        to: timeInfo.to,
-        size
+    // === 阶段1: 广泛查询 ===
+    console.log('[analyzer] 阶段1: 广泛查询, query:', query, 'maxPages:', maxPages);
+    const firstPass = await searchLogsMultiPage({
+        projectName, logStoreName, query, from: timeInfo.from, to: timeInfo.to, size
     }, {
         cookies: slsConfig.cookies || {},
         csrfToken: slsConfig.csrfToken || '',
         b3: slsConfig.b3 || '',
         region: slsConfig.region || 'cn-beijing'
+    }, maxPages);
+
+    searchPhases.push({
+        phase: '广泛查询',
+        query: query || '(全部日志)',
+        pagesUsed: firstPass.pagesUsed,
+        logCount: firstPass.logs.length
     });
 
-    console.log('[analyzer] 搜索结果:', { count: searchResult.count, logs: searchResult.logs?.length });
+    let mergedLogs = firstPass.logs;
+    let refinedQuery = null;
 
-    // 基础统计
-    console.log('[analyzer] 开始基础统计...');
-    const stats = analyzeStats(searchResult.logs);
-    console.log('[analyzer] 统计完成');
+    // === 阶段2: 精准二次检索（条件触发）===
+    const firstStats = analyzeStats(firstPass.logs);
+    const errorWarnCount = (firstStats.byLevel?.ERROR || 0) + (firstStats.byLevel?.WARN || 0);
 
-    // AI 分析
+    if (firstPass.logs.length >= 50 && errorWarnCount < 5 && !query.includes('level')) {
+        console.log('[analyzer] 阶段2: 触发精准二次检索, ERROR/WARN 数:', errorWarnCount);
+
+        // 二次检索策略：搜索 content 中包含 ERROR/Exception/WARN 关键词
+        // 注意：SLS 的 level 字段可能和日志内部的级别不一致
+        const refineQuery = errorWarnCount < 2
+            ? 'ERROR OR Exception OR WARN'
+            : 'ERROR OR Exception';
+
+        refinedQuery = refineQuery;
+
+        const secondPass = await searchLogsMultiPage({
+            projectName, logStoreName,
+            query: refineQuery,
+            from: timeInfo.from, to: timeInfo.to,
+            size
+        }, {
+            cookies: slsConfig.cookies || {},
+            csrfToken: slsConfig.csrfToken || '',
+            b3: slsConfig.b3 || '',
+            region: slsConfig.region || 'cn-beijing'
+        }, 2); // 二次检索最多2页
+
+        searchPhases.push({
+            phase: '精准二次检索',
+            query: refineQuery,
+            pagesUsed: secondPass.pagesUsed,
+            logCount: secondPass.logs.length
+        });
+
+        // 合并去重：二次检索的日志补充到广泛查询中
+        const existingKeys = new Set(mergedLogs.map(l => `${l.__time__ || ''}|${l.content || l.message || ''}`));
+        for (const log of secondPass.logs) {
+            const key = `${log.__time__ || ''}|${log.content || log.message || ''}`;
+            if (!existingKeys.has(key)) {
+                mergedLogs.push(log);
+                existingKeys.add(key);
+            }
+        }
+
+        console.log('[analyzer] 合并后日志数:', mergedLogs.length);
+    }
+
+    // === 阶段3: 统计 + AI 分析 ===
+    const stats = analyzeStats(mergedLogs);
+
     let aiAnalysis = null;
-    console.log('[analyzer] AI 配置检查:', { hasApiKey: !!aiConfig?.apiKey, provider: aiConfig?.provider });
-    if (aiConfig?.apiKey && searchResult.logs.length > 0) {
+    if (aiConfig?.apiKey && mergedLogs.length > 0) {
         try {
-            console.log('[analyzer] 开始 AI 分析...');
-            // 设置超时
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('AI 分析超时（180秒）')), 180000)
             );
 
             aiAnalysis = await Promise.race([
-                callAI(searchResult.logs, query, timeInfo, aiConfig, customPrompt),
+                callAI(mergedLogs, query, timeInfo, aiConfig, customPrompt),
                 timeoutPromise
             ]);
-            console.log('[analyzer] AI 分析完成');
         } catch (error) {
             console.error('[analyzer] AI 分析失败:', error.message);
             aiAnalysis = { error: error.message };
@@ -107,18 +135,23 @@ export async function analyzeLogs(params) {
         projectName,
         logStoreName,
         query,
+        refinedQuery,
         timeRange: timeInfo.label,
         timeFrom: timeInfo.fromFormatted,
         timeTo: timeInfo.toFormatted,
-        size, // 请求的日志数量
-        logCount: searchResult.count,
-        returnedCount: searchResult.logs.length,
+        size,
+        maxPages,
+        logCount: firstPass.count,
+        returnedCount: mergedLogs.length,
+        searchPhases,
         stats,
         aiAnalysis,
-        logs: searchResult.logs
+        logs: mergedLogs
     };
 
-    // 保存报告
+    // 确保报告目录存在
+    await fs.mkdir(REPORTS_DIR, { recursive: true });
+
     await fs.writeFile(
         path.join(REPORTS_DIR, `${report.id}.json`),
         JSON.stringify(report, null, 2),
@@ -126,6 +159,20 @@ export async function analyzeLogs(params) {
     );
 
     return report;
+}
+
+/**
+ * 从日志中提取 traceId — 支持独立字段和 content 内嵌格式
+ */
+function extractTraceId(log, message) {
+    // 1. 独立字段
+    if (log.TID || log.traceId || log.trace_id) {
+        return log.TID || log.traceId || log.trace_id;
+    }
+    // 2. content 内嵌格式：[TID_xxx] 或 TID:xxx
+    const match = message.match(/\[TID_([^\]]+)\]|TID[:\s]+(\S+)/);
+    if (match) return match[1] || match[2];
+    return '';
 }
 
 /**
@@ -140,7 +187,8 @@ function analyzeStats(logs) {
             warnings: [],
             uniqueTraces: [],
             uniqueUsers: [],
-            timeSpan: null
+            timeSpan: null,
+            keyLogs: [] // 重点日志
         };
     }
 
@@ -149,38 +197,52 @@ function analyzeStats(logs) {
     const warnings = [];
     const uniqueTraces = new Set();
     const uniqueUsers = new Set();
+    const keyLogs = []; // 重点日志：ERROR、WARN、异常、堆栈等
 
     for (const log of logs) {
-        // 日志级别
         const level = (log.level || log.LEVEL || 'INFO').toUpperCase();
         byLevel[level] = (byLevel[level] || 0) + 1;
 
-        // 错误检测 (SLS 日志使用 content 字段)
         const message = log.content || log.message || log.msg || '';
-        if (level === 'ERROR' || message.includes('Exception')) {
-            errors.push({
-                time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null,
-                level,
-                message: message.substring(0, 500)
+        const time = log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null;
+        const traceId = extractTraceId(log, message);
+        const userId = log.userId || log.user_id || '';
+
+        if (level === 'ERROR' || message.includes('Exception') || message.includes('Error')) {
+            errors.push({ time, level, message: message.substring(0, 500) });
+            keyLogs.push({
+                time, level, message, traceId, userId,
+                reason: level === 'ERROR' ? 'ERROR级别' : '包含异常信息'
             });
         }
 
-        // 警告检测
         if (level === 'WARN') {
-            warnings.push({
-                time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null,
-                message: message.substring(0, 500)
+            warnings.push({ time, message: message.substring(0, 500) });
+            keyLogs.push({
+                time, level, message, traceId, userId,
+                reason: 'WARN级别'
             });
         }
 
-        // Trace ID
-        const traceId = log.TID || log.traceId || log.trace_id;
-        if (traceId) uniqueTraces.add(traceId);
+        if (message.includes('\n\tat ') || message.includes('\tat ') || message.includes('Stack trace')) {
+            if (!keyLogs.find(k => k.message === message)) {
+                keyLogs.push({
+                    time, level, message, traceId, userId,
+                    reason: '包含堆栈信息'
+                });
+            }
+        }
 
-        // 用户 ID
-        const userId = log.userId || log.user_id;
+        if (traceId) uniqueTraces.add(traceId);
         if (userId) uniqueUsers.add(userId);
     }
+
+    // 按时间排序重点日志（最新的在前）
+    keyLogs.sort((a, b) => {
+        if (!a.time) return 1;
+        if (!b.time) return -1;
+        return new Date(b.time) - new Date(a.time);
+    });
 
     return {
         total: logs.length,
@@ -189,7 +251,8 @@ function analyzeStats(logs) {
         warnings: warnings.slice(0, 20),
         uniqueTraces: Array.from(uniqueTraces),
         uniqueUsers: Array.from(uniqueUsers),
-        timeSpan: calculateTimeSpan(logs)
+        timeSpan: calculateTimeSpan(logs),
+        keyLogs: keyLogs.slice(0, 50) // 最多 50 条重点日志
     };
 }
 

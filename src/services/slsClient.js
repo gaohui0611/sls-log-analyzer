@@ -53,6 +53,57 @@ async function requestWithRetry(requestFn, maxRetries = 2) {
 }
 
 /**
+ * 多页获取日志 — 自动翻页合并结果
+ * @param {Object} params - 查询参数（同 searchLogs）
+ * @param {Object} slsConfig - SLS 认证配置
+ * @param {number} maxPages - 最大翻页数（默认1，最大5）
+ * @returns {Object} { success, count, logs, pagesUsed }
+ */
+export async function searchLogsMultiPage(params, slsConfig, maxPages = 1) {
+    const cap = Math.min(Math.max(maxPages, 1), 5);
+    const allLogs = [];
+    let totalCount = 0;
+    let pagesUsed = 0;
+
+    for (let page = 1; page <= cap; page++) {
+        const result = await searchLogs({ ...params, page }, slsConfig);
+
+        if (!result.success) {
+            // 第一页失败直接抛出，后续页失败则停止翻页（已有数据可用）
+            if (page === 1) throw new Error('查询失败');
+            break;
+        }
+
+        totalCount = result.count;
+        allLogs.push(...result.logs);
+        pagesUsed = page;
+
+        // 如果本页返回日志数 < size，说明已到最后一页，无需继续
+        if (result.logs.length < params.size) break;
+    }
+
+    return {
+        success: true,
+        count: totalCount,
+        logs: deduplicateLogs(allLogs),
+        pagesUsed
+    };
+}
+
+/**
+ * 去重日志 — 按 __time__ + content 组合键
+ */
+function deduplicateLogs(logs) {
+    const seen = new Set();
+    return logs.filter(log => {
+        const key = `${log.__time__ || ''}|${log.content || log.message || ''}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+/**
  * 搜索日志
  */
 export async function searchLogs(params, slsConfig) {
