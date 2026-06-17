@@ -29,3 +29,8 @@ excalidraw.log
 *.bak
 *.bak2
 *.bak3
+.gstack/
+
+# Claude Code local state
+.claude/worktrees/
+.claude/settings.local.json

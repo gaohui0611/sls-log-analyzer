@@ -6,7 +6,12 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "analyze": "node scripts/analyze-codebase.mjs",
+    "analyze:ai": "node scripts/ai-code-review.mjs",
+    "analyze:workflow": "node scripts/run-analysis-workflow.mjs",
+    "analyze:scheduled": "./scripts/scheduled-analysis.sh",
+    "analyze:setup-cron": "./scripts/setup-cron.sh"
   },
   "keywords": [
     "sls",
