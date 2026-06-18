@@ -89,7 +89,7 @@ router.post('/analyze', async (req, res) => {
  */
 router.post('/trace-search', async (req, res) => {
     try {
-        const { projectId, traceId, timeRange = 'thisWeek', maxPages = 3 } = req.body;
+        const { projectId, traceId, aroundTime, timeRange, maxPages = 3 } = req.body;
 
         if (!projectId || !traceId) {
             return res.status(400).json({ success: false, error: '缺少项目 ID 或 traceId' });
@@ -116,18 +116,39 @@ router.post('/trace-search', async (req, res) => {
 
         // 构建 traceId 查询（兼容多种字段名）
         // 搜索 content 中包含 traceId 的日志（兼容多种格式：[TID_xxx], TID:xxx, traceId:xxx）
-        const traceQuery = `TID_${traceId} OR "traceId:${traceId}" OR "trace_id:${traceId}"`;
+        // 末尾追加裸 traceId，兼容日志里直接出现 ID 本体的格式
+        const traceQuery = `"TID_${traceId}" OR "traceId:${traceId}" OR "trace_id:${traceId}" OR "${traceId}"`;
 
         const { searchLogsMultiPage } = await import('../services/slsClient.js');
         const { parseTimeRange } = await import('../services/timeParser.js');
 
-        const timeInfo = parseTimeRange(timeRange);
+        // 时间窗口：优先围绕原日志时间点 ±6h（精准覆盖 trace 生命周期）；
+        // 否则回退 last7days（比 thisWeek 稳健，不依赖当前是周几）
+        let from, to, timeLabel, fromFormatted, toFormatted;
+        if (aroundTime && Number.isFinite(Number(aroundTime))) {
+            const center = Number(aroundTime);
+            const HALF_WINDOW = 6 * 3600; // ±6 小时
+            from = center - HALF_WINDOW;
+            to = center + HALF_WINDOW;
+            const centerDate = new Date(center * 1000);
+            timeLabel = `围绕 ${centerDate.toLocaleString('zh-CN')} ±6h`;
+            fromFormatted = new Date(from * 1000).toLocaleString('zh-CN');
+            toFormatted = new Date(to * 1000).toLocaleString('zh-CN');
+        } else {
+            const timeInfo = parseTimeRange(timeRange || 'last7days');
+            from = timeInfo.from;
+            to = timeInfo.to;
+            timeLabel = timeInfo.label;
+            fromFormatted = timeInfo.fromFormatted;
+            toFormatted = timeInfo.toFormatted;
+        }
+
         const result = await searchLogsMultiPage({
             projectName: traceSlsProjectName,
             logStoreName: project.logStoreName,
             query: traceQuery,
-            from: timeInfo.from,
-            to: timeInfo.to,
+            from,
+            to,
             size: 100
         }, slsConfig, maxPages);
 
@@ -138,9 +159,9 @@ router.post('/trace-search', async (req, res) => {
                 projectName: project.projectName,
                 logStoreName: project.logStoreName,
                 query: traceQuery,
-                timeRange: timeInfo.label,
-                timeFrom: timeInfo.fromFormatted,
-                timeTo: timeInfo.toFormatted,
+                timeRange: timeLabel,
+                timeFrom: fromFormatted,
+                timeTo: toFormatted,
                 count: result.count,
                 logCount: result.logs.length,
                 pagesUsed: result.pagesUsed,

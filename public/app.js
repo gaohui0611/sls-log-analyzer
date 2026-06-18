@@ -804,7 +804,7 @@ function renderAnalysisResult(data) {
               <span class="tag tag-${levelClass || 'info'}" style="font-size: 11px;">${log.level}</span>
               <span style="font-size: 11px; color: var(--text-secondary);">${log.time || '-'}</span>
             </div>
-            ${log.traceId ? `<div style="font-size: 11px; color: var(--accent-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 ${escapeHtml(log.traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(log.traceId)}', '${window.currentTimeRange}')" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
+            ${log.traceId ? `<div style="font-size: 11px; color: var(--accent-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 ${escapeHtml(log.traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(log.traceId)}', ${log.time ? Math.floor(new Date(log.time).getTime()/1000) : 0})" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
             <div style="font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--text-primary);">
               ${escapeHtml(log.message.substring(0, 200))}${log.message.length > 200 ? '...' : ''}
             </div>
@@ -853,7 +853,7 @@ function renderAnalysisResult(data) {
               <span class="tag tag-${levelClass || 'info'}" style="font-size: 11px;">${log.level}</span>
               <span style="font-size: 11px; color: var(--text-secondary);">${log.time || '-'}</span>
             </div>
-            ${log.traceId ? `<div style="font-size: 11px; color: var(--accent-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 ${escapeHtml(log.traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(log.traceId)}', '${window.currentTimeRange}')" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
+            ${log.traceId ? `<div style="font-size: 11px; color: var(--accent-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 ${escapeHtml(log.traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(log.traceId)}', ${log.time ? Math.floor(new Date(log.time).getTime()/1000) : 0})" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
             ${log.userId ? `<div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px;">👤 ${escapeHtml(log.userId)}</div>` : ''}
             <div style="font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--text-primary);">
               ${escapeHtml(log.message.substring(0, 500))}${log.message.length > 500 ? '...' : ''}
@@ -911,7 +911,7 @@ function renderAnalysisResult(data) {
             <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">
               🕐 ${time}
             </div>
-            ${traceId ? `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 TraceID: ${escapeHtml(traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(traceId)}', '${window.currentTimeRange}')" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
+            ${traceId ? `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🔗 TraceID: ${escapeHtml(traceId)} <button onclick="traceSearch('${window.currentProjectId}', '${escapeHtml(traceId)}', ${log.__time__ || 0})" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--accent-secondary); background: transparent; color: var(--accent-secondary); cursor: pointer;">追踪</button></div>` : ''}
             ${userId ? `<div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">👤 UserID: ${userId}</div>` : ''}
             <div style="margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 4px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all;">
               ${escapeHtml(message)}
@@ -1251,8 +1251,11 @@ function exportReport(format) {
 
 /**
  * 一键追踪 traceId — 调用 /api/trace-search 查完整链路
+ * @param {string} projectId 项目 ID
+ * @param {string} traceId  Trace ID
+ * @param {number} [aroundTime] 原日志时间点（Unix 秒），后端据此构造 ±6h 窗口；缺失则回退 last7days
  */
-window.traceSearch = async function(projectId, traceId, timeRange) {
+window.traceSearch = async function(projectId, traceId, aroundTime) {
     const modal = document.getElementById('traceModal');
     const body = document.getElementById('traceModalBody');
 
@@ -1267,7 +1270,7 @@ window.traceSearch = async function(projectId, traceId, timeRange) {
     try {
         const response = await apiRequest('/trace-search', {
             method: 'POST',
-            body: JSON.stringify({ projectId, traceId, timeRange, maxPages: 3 })
+            body: JSON.stringify({ projectId, traceId, aroundTime, maxPages: 3 })
         });
 
         const data = response.data;
