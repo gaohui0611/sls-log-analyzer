@@ -41,16 +41,19 @@ router.post('/auto-sync-auth', async (req, res) => {
 });
 
 /**
- * POST /api/bookmark-sync - 书签工具同步认证信息
+ * POST /api/bookmark-sync - 书签工具同步 CSRF Token
+ * 书签在 SLS 控制台页面执行，抓取运行时内存中的 csrfToken / b3
+ * （这两个值无法从磁盘 cookies 读取，只能靠书签在页面内抓取）
+ * Cookies 由后端磁盘读取（autoSyncAuth），书签只负责补 token。
  */
 router.post('/bookmark-sync', async (req, res) => {
     try {
-        const { cookies, url, referrer, csrfToken, b3 } = req.body;
+        const { url, referrer, csrfToken, b3 } = req.body;
 
-        if (!cookies || Object.keys(cookies).length === 0) {
+        if (!csrfToken && !b3) {
             return res.status(400).json({
                 success: false,
-                error: '未找到认证信息，请确保已在阿里云登录'
+                error: '未抓取到 CSRF Token 或 b3，请确认在 SLS 控制台页面（且页面已加载完成）点击书签'
             });
         }
 
@@ -64,27 +67,26 @@ router.post('/bookmark-sync', async (req, res) => {
             });
         }
 
-        console.log('收到书签同步请求:');
-        console.log('- Cookies 数量:', Object.keys(cookies).length);
+        console.log('收到书签同步请求（抓取 CSRF Token）:');
         console.log('- 来源 URL:', url);
         console.log('- CSRF Token:', csrfToken ? '有' : '无');
         console.log('- B3:', b3 ? '有' : '无');
 
+        // 从磁盘读取最新的 cookies（含 HttpOnly），与书签抓到的 token 合并
+        const { autoSyncAuth } = await import('../services/autoAuthSync.js');
+        let cookiesCount = 0;
+        try {
+            const refresh = await autoSyncAuth();
+            cookiesCount = refresh.cookies;
+        } catch (err) {
+            console.log('磁盘读取 cookies 失败（仅保存 token）:', err.message);
+        }
+
         const config = await readConfig();
 
-        // 更新配置
-        config.slsConfig = {
-            ...config.slsConfig,
-            cookies: { ...cookies, timestamp: Date.now() }
-        };
-
-        // 保存 CSRF Token 和 b3（如果有）
-        if (csrfToken) {
-            config.slsConfig.csrfToken = csrfToken;
-        }
-        if (b3) {
-            config.slsConfig.b3 = b3;
-        }
+        // 保存 CSRF Token 和 b3
+        if (csrfToken) config.slsConfig.csrfToken = csrfToken;
+        if (b3) config.slsConfig.b3 = b3;
 
         // 尝试从 URL 中提取 region
         if (url && url.includes('slsRegion=')) {
