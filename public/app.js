@@ -1718,6 +1718,8 @@ window.viewReport = async function(id) {
     try {
         const response = await apiRequest(`/reports/${id}`);
         renderAnalysisResult(response.data);
+        // 回显当时的查询条件到分析表单，方便用户基于该查询继续调整再分析
+        restoreQueryFromReport(response.data);
     } catch (error) {
         container.innerHTML = `
             <div class="card" style="margin-top: 30px;">
@@ -1727,6 +1729,52 @@ window.viewReport = async function(id) {
             </div>
         `;
     }
+}
+
+/**
+ * 查看报告时，把当时的查询条件回显到分析表单
+ * 报告未存 projectId，按 logStoreName 反查；timeRange 存的是中文 label，按 option 文本匹配
+ * @param {Object} data 报告详情
+ */
+function restoreQueryFromReport(data) {
+    if (!data) return;
+
+    // 项目：按 logStoreName 反查 projectId
+    const logStore = data.logStoreName;
+    const matchedProject = Object.entries(state.projects || {}).find(
+        ([, p]) => p && p.logStoreName === logStore
+    );
+    const projectSelect = document.getElementById('projectSelect');
+    if (matchedProject && projectSelect) {
+        projectSelect.value = matchedProject[0];
+        window.currentProjectId = matchedProject[0];
+    }
+
+    // 时间范围：报告存的是 label（如「上周」），按 option 文本匹配回填 value
+    const timeSelect = document.getElementById('timeRangeSelect');
+    if (timeSelect && data.timeRange) {
+        const opt = Array.from(timeSelect.options).find(o => o.textContent === data.timeRange);
+        if (opt) {
+            timeSelect.value = opt.value;
+            window.currentTimeRange = opt.value;
+        }
+    }
+
+    // 关键词
+    const queryInput = document.getElementById('queryInput');
+    if (queryInput && data.query !== undefined) {
+        queryInput.value = data.query || '';
+    }
+
+    // 其余参数（按存在性回填，缺失则不动）
+    const sizeSelect = document.getElementById('sizeSelect');
+    if (sizeSelect && data.size) sizeSelect.value = data.size;
+
+    const maxPagesSelect = document.getElementById('maxPagesSelect');
+    if (maxPagesSelect && data.maxPages) maxPagesSelect.value = data.maxPages;
+
+    const presetSelect = document.getElementById('presetTemplateSelect');
+    if (presetSelect && data.presetTemplate) presetSelect.value = data.presetTemplate;
 }
 
 window.deleteReport = async function(id) {
