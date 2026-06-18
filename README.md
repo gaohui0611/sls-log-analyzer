@@ -26,11 +26,11 @@ npm install
 npm start
 ```
 
-服务将启动在: http://localhost:3001
+服务将启动在: http://localhost:3000
 
 ### 3. 配置使用
 
-1. 打开浏览器访问 http://localhost:3001
+1. 打开浏览器访问 http://localhost:3000
 2. 进入 **系统设置** 页面，同步阿里云认证信息
 3. 进入 **项目管理** 页面，添加你的 SLS 项目
 4. 进入 **AI 配置** 页面，配置大模型 API
@@ -111,7 +111,7 @@ sls-log-analyzer/
 可选配置 `.env` 文件：
 
 ```env
-PORT=3001
+PORT=3000
 AI_PROVIDER=anthropic
 AI_API_KEY=sk-ant-xxx
 AI_MODEL=claude-3-5-sonnet-20241022
@@ -151,5 +151,5 @@ AI_MODEL=claude-3-5-sonnet-20241022
 如有问题，请检查：
 1. Node.js 版本 >= 18.0.0
 2. 所有依赖是否正确安装
-3. 端口 3001 是否被占用
+3. 端口 3000 是否被占用
 4. 认证信息是否有效

@@ -17,6 +17,7 @@ router.get('/config', async (req, res) => {
             success: true,
             data: {
                 projects: config.projects,
+                environments: config.environments,
                 aiProvider: config.aiConfig?.provider || 'anthropic',
                 aiModel: config.aiConfig?.model || '',
                 aiBaseUrl: config.aiConfig?.baseUrl || '',
@@ -33,12 +34,16 @@ router.get('/config', async (req, res) => {
  */
 router.post('/config', async (req, res) => {
     try {
-        const { projects, aiConfig } = req.body;
+        const { projects, environments, aiConfig } = req.body;
 
         const config = await readConfig();
 
         if (projects) {
             config.projects = projects;
+        }
+
+        if (environments) {
+            config.environments = environments;
         }
 
         if (aiConfig) {

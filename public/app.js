@@ -8,6 +8,7 @@ const API_BASE = '/api';
 // 全局状态
 let state = {
     projects: {},
+    environments: {},
     config: {},
     authStatus: null,
     reports: [],         // 所有报告
@@ -81,6 +82,42 @@ function showAlert(elementId, message, type = 'info') {
     showToast(message, type);
 }
 
+/**
+ * 错误信息人性化映射表 —— 把技术错误翻译成人话 + emoji
+ * 命中第一条匹配即返回；都不匹配则返回原文（加通用表情）
+ * @param {string} msg - 原始错误信息
+ * @param {number} status - HTTP 状态码
+ * @returns {string} 人性化文案
+ */
+function humanizeError(msg, status = 0) {
+    const m = (msg || '').toLowerCase();
+    const has = (...keys) => keys.some(k => m.includes(k.toLowerCase()));
+
+    if (status === 401 || has('认证', 'csrf', 'cookie', '未授权', 'unauthorized', '登录')) {
+        return '🔐 认证已过期或缺失，请到「系统设置」点一键同步';
+    }
+    if (has('econnreset', 'timeout', '超时', 'etimedout', 'enotfound', 'network', '网络')) {
+        return '⏳ 网络不给力，请求超时了，请稍后重试';
+    }
+    if (has('apikey', 'api key', 'api_key', '密钥', 'api-key')) {
+        return '🔑 AI 密钥无效或未配置，请检查 AI 配置';
+    }
+    if (status === 404 || has('项目不存在', 'not found', '找不到')) {
+        return '🔍 找不到对应的资源（项目或报告可能已被删除）';
+    }
+    if (has('项目', 'logstore', '环境')) {
+        return '📦 项目配置异常，请到「项目管理」检查环境与项目设置';
+    }
+    if (has('rate limit', '429', '频率', '限流', 'quota')) {
+        return '🚦 请求过于频繁，已触发限流，请稍候再试';
+    }
+    if (has('waf', '拦截', 'forbidden', '403')) {
+        return '🛡️ 请求被安全防护拦截，可尝试重新同步认证';
+    }
+    // 默认：加通用表情保留原文
+    return '😵 出错了：' + (msg || '未知错误');
+}
+
 // API 调用
 async function apiRequest(url, options = {}) {
     const defaultOptions = {
@@ -101,10 +138,32 @@ async function apiRequest(url, options = {}) {
         mergedOptions.body = JSON.stringify(mergedOptions.body);
     }
 
-    const response = await fetch(`${API_BASE}${url}`, mergedOptions);
-    const data = await response.json();
+    let response;
+    try {
+        response = await fetch(`${API_BASE}${url}`, mergedOptions);
+    } catch (e) {
+        // fetch 本身失败（网络断开、服务未启动）
+        throw new Error('🔌 无法连接服务器，请检查服务是否已启动（npm run dev）');
+    }
+
+    // 先取文本，再判断是否为 JSON（服务异常时可能返回 HTML 错误页）
+    const text = await response.text();
+    let data;
+    if (!text || text.trimStart().startsWith('<')) {
+        // 返回了 HTML（如服务重启中的错误页、静态 fallback）
+        throw new Error('🔌 服务返回了非预期内容，可能正在重启或未启动');
+    }
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error('📦 服务返回了无法解析的数据格式');
+    }
+
     if (!response.ok || !data.success) {
-        throw new Error(data.error || '请求失败');
+        // 错误人性化：翻译技术错误为人话 + emoji
+        const rawError = data.error || `请求失败 (HTTP ${response.status})`;
+        const humanized = humanizeError(rawError, response.status);
+        throw new Error(humanized);
     }
     return data;
 }
@@ -128,70 +187,155 @@ document.querySelectorAll('.nav-item').forEach(navItem => {
     });
 });
 
-// ========== 项目管理 ==========
+// ========== 项目管理（环境维度） ==========
 
+/**
+ * 加载项目与环境配置
+ */
 async function loadProjects() {
     try {
         const response = await apiRequest('/config');
         state.projects = response.data.projects || {};
+        state.environments = response.data.environments || {};
+        renderEnvironments();
         renderProjects();
         updateProjectSelect();
+        updateProjectEnvSelect();
     } catch (error) {
         console.error('加载项目失败:', error);
+        showToast(`加载项目配置失败: ${error.message}`, 'error');
     }
 }
 
+/**
+ * 渲染环境列表
+ */
+function renderEnvironments() {
+    const container = document.getElementById('environmentList');
+    if (!container) return;
+    const envs = state.environments || {};
+    const keys = Object.keys(envs);
+
+    if (keys.length === 0) {
+        container.innerHTML = '<p class="form-hint" style="margin:8px 0;">还没有配置环境，请在下方添加。</p>';
+        return;
+    }
+
+    container.innerHTML = keys.map(key => {
+        const env = envs[key];
+        const projectCount = Object.values(state.projects).filter(p => p.envKey === key).length;
+        return `
+        <div class="project-item" style="align-items:center;">
+            <div class="info" style="flex:1;">
+                <h4 style="margin:0 0 4px;">🏷️ ${escapeHtml(env.name || key)} <span style="font-size:11px; color:var(--text-muted); font-weight:normal;">[${escapeHtml(key)}] · ${projectCount} 个项目</span></h4>
+                <p style="margin:0; font-size:12px; color:var(--text-secondary); font-family:monospace; word-break:break-all;">${escapeHtml(env.slsProjectName || '(未填 SLS ID)')}</p>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary btn-sm" onclick="editEnvironment('${escapeHtml(key)}')">✏️ 编辑</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteEnvironment('${escapeHtml(key)}')">🗑️ 删除</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+/**
+ * 刷新"项目表单"里的所属环境下拉
+ */
+function updateProjectEnvSelect() {
+    const select = document.getElementById('newProjectEnv');
+    if (!select) return;
+    const envs = state.environments || {};
+    select.innerHTML = '<option value="">-- 请选择环境 --</option>' +
+        Object.entries(envs).map(([key, env]) =>
+            `<option value="${escapeHtml(key)}">${escapeHtml(env.name || key)}</option>`
+        ).join('');
+}
+
+/**
+ * 渲染项目列表（按环境分组）
+ */
 function renderProjects() {
     const container = document.getElementById('projectList');
     if (!container) return;
 
-    if (Object.keys(state.projects).length === 0) {
+    if (Object.keys(state.projects || {}).length === 0) {
         container.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">📁</div>
-        <p>还没有配置任何项目</p>
-      </div>
-    `;
+            <div class="empty-state">
+                <div class="icon">📁</div>
+                <p>还没有配置任何项目</p>
+            </div>`;
         return;
     }
 
-    container.innerHTML = Object.entries(state.projects).map(([id, project]) => `
-    <div class="project-item" data-id="${id}">
-      <div class="info">
-        <h4>${project.name}</h4>
-        <p>环境ID: ${project.projectName} / 项目所属: ${project.logStoreName}</p>
-      </div>
-      <div class="actions">
-        <button class="btn btn-secondary btn-sm" onclick="editProject('${id}')">
-          ✏️ 编辑
-        </button>
-        <button class="btn btn-danger btn-sm" onclick="deleteProject('${id}')">
-          🗑️ 删除
-        </button>
-      </div>
-    </div>
-  `).join('');
+    // 按 envKey 分组
+    const groups = {};
+    Object.entries(state.projects).forEach(([id, project]) => {
+        const key = project.envKey || 'unknown';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push({ id, project });
+    });
+
+    container.innerHTML = Object.entries(groups).map(([envKey, items]) => {
+        const env = (state.environments || {})[envKey];
+        const envName = env ? env.name : (envKey === 'unknown' ? '未分组' : envKey);
+        return `
+        <div style="margin-bottom: 16px;">
+            <div style="font-size:13px; font-weight:600; color:var(--accent-primary); margin-bottom:8px; padding-bottom:6px; border-bottom: 1px solid var(--border-subtle);">
+                🏷️ ${escapeHtml(envName)} <span style="color:var(--text-muted); font-weight:normal;">(${items.length})</span>
+            </div>
+            ${items.map(({ id, project }) => `
+                <div class="project-item" data-id="${id}">
+                    <div class="info">
+                        <h4 style="margin:0 0 4px;">${escapeHtml(project.name)}</h4>
+                        <p style="margin:0; font-size:12px; color:var(--text-secondary); font-family:monospace;">${escapeHtml(project.logStoreName || '')}</p>
+                    </div>
+                    <div class="actions">
+                        <button class="btn btn-secondary btn-sm" onclick="editProject('${id}')">✏️ 编辑</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteProject('${id}')">🗑️ 删除</button>
+                    </div>
+                </div>`).join('')}
+        </div>`;
+    }).join('');
 }
 
+/**
+ * 分析页项目下拉（按环境 optgroup 分组）
+ */
 function updateProjectSelect() {
     const select = document.getElementById('projectSelect');
+    if (!select) return;
     select.innerHTML = '<option value="">-- 请选择项目 --</option>';
 
-    Object.entries(state.projects).forEach(([id, project]) => {
-        const option = document.createElement('option');
-        option.value = id;
-        option.textContent = project.name;
-        select.appendChild(option);
+    // 按 envKey 分组
+    const groups = {};
+    Object.entries(state.projects || {}).forEach(([id, p]) => {
+        const key = p.envKey || 'unknown';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push({ id, project: p });
+    });
+
+    Object.entries(groups).forEach(([envKey, items]) => {
+        const env = (state.environments || {})[envKey];
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = env ? env.name : (envKey === 'unknown' ? '未分组' : envKey);
+        items.forEach(({ id, project }) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = project.name;
+            optgroup.appendChild(option);
+        });
+        select.appendChild(optgroup);
     });
 }
 
+// 添加/更新项目
 document.getElementById('addProjectBtn').addEventListener('click', async () => {
     const name = document.getElementById('newProjectName').value.trim();
-    const projectName = document.getElementById('newSlsProject').value.trim();
+    const envKey = document.getElementById('newProjectEnv').value;
     const logStoreName = document.getElementById('newLogStore').value.trim();
 
-    if (!name || !projectName || !logStoreName) {
-        showAlert('projects-tab', '请填写所有字段', 'error');
+    if (!name || !envKey || !logStoreName) {
+        showToast('⚠️ 请填写完整：项目名称、所属环境、LogStore 都不能少哦', 'warning');
         return;
     }
 
@@ -199,12 +343,12 @@ document.getElementById('addProjectBtn').addEventListener('click', async () => {
     const editId = addBtn.dataset.editId;
 
     if (editId) {
-        // 更新现有项目
-        state.projects[editId] = { name, projectName, logStoreName };
+        // 更新：保留老 projectName 字段做回退
+        const old = state.projects[editId] || {};
+        state.projects[editId] = { name, envKey, logStoreName, projectName: old.projectName };
     } else {
-        // 添加新项目
         const id = Date.now().toString();
-        state.projects[id] = { name, projectName, logStoreName };
+        state.projects[id] = { name, envKey, logStoreName };
     }
 
     try {
@@ -213,78 +357,137 @@ document.getElementById('addProjectBtn').addEventListener('click', async () => {
             body: JSON.stringify({ projects: state.projects })
         });
 
-        // 重置表单和按钮
+        // 重置表单
         document.getElementById('newProjectName').value = '';
-        document.getElementById('newSlsProject').value = '';
+        document.getElementById('newProjectEnv').value = '';
         document.getElementById('newLogStore').value = '';
         addBtn.textContent = '➕ 添加项目';
         delete addBtn.dataset.editId;
+        document.getElementById('cancelEditBtn').style.display = 'none';
 
         loadProjects();
-        showAlert('projects-tab', editId ? '✅ 项目更新成功' : '✅ 项目添加成功', 'success');
+        showToast(editId ? '✅ 项目已更新' : '✅ 项目添加成功', 'success');
     } catch (error) {
-        showAlert('projects-tab', `❌ ${editId ? '更新' : '添加'}失败: ${error.message}`, 'error');
+        showToast(`❌ ${editId ? '更新' : '添加'}失败: ${error.message}`, 'error');
     }
 });
 
 // 取消编辑
 document.getElementById('cancelEditBtn')?.addEventListener('click', () => {
-    const addBtn = document.getElementById('addProjectBtn');
-    const cancelBtn = document.getElementById('cancelEditBtn');
-
-    // 清空表单
     document.getElementById('newProjectName').value = '';
-    document.getElementById('newSlsProject').value = '';
+    document.getElementById('newProjectEnv').value = '';
     document.getElementById('newLogStore').value = '';
-
-    // 重置按钮状态
+    const addBtn = document.getElementById('addProjectBtn');
     addBtn.textContent = '➕ 添加项目';
     delete addBtn.dataset.editId;
-    cancelBtn.style.display = 'none';
-
-    showAlert('projects-tab', '已取消编辑', 'success');
+    document.getElementById('cancelEditBtn').style.display = 'none';
+    showToast('已取消编辑', 'info');
 });
 
 // 编辑项目
-window.editProject = async function(id) {
+window.editProject = function (id) {
     const project = state.projects[id];
     if (!project) return;
 
-    // 填充表单
-    document.getElementById('newProjectName').value = project.name;
-    document.getElementById('newSlsProject').value = project.projectName;
-    document.getElementById('newLogStore').value = project.logStoreName;
+    document.getElementById('newProjectName').value = project.name || '';
+    document.getElementById('newProjectEnv').value = project.envKey || '';
+    document.getElementById('newLogStore').value = project.logStoreName || '';
 
-    // 更改添加按钮为更新按钮
     const addBtn = document.getElementById('addProjectBtn');
-    const cancelBtn = document.getElementById('cancelEditBtn');
     addBtn.textContent = '💾 更新项目';
     addBtn.dataset.editId = id;
-    cancelBtn.style.display = 'inline-flex';
+    document.getElementById('cancelEditBtn').style.display = 'inline-flex';
 
-    // 显示提示
-    showAlert('projects-tab', '✏️ 编辑模式: 修改后点击"更新项目"保存', 'success');
+    showToast('✏️ 已进入编辑模式，修改后点击"更新项目"', 'info');
+    document.querySelector('#projects-tab .card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
 
-    // 滚动到表单
-    document.querySelector('.form-group')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-window.deleteProject = async function(id) {
-    if (!confirm('确定要删除这个项目吗?')) return;
-
+// 删除项目
+window.deleteProject = async function (id) {
+    if (!confirm('确定要删除这个项目吗？')) return;
     delete state.projects[id];
-
     try {
-        await apiRequest('/config', {
-            method: 'POST',
-            body: JSON.stringify({ projects: state.projects })
-        });
+        await apiRequest('/config', { method: 'POST', body: JSON.stringify({ projects: state.projects }) });
         loadProjects();
-        showAlert('projects-tab', '✅ 项目已删除', 'success');
+        showToast('🗑️ 项目已删除', 'success');
     } catch (error) {
-        showAlert('projects-tab', `❌ 删除失败: ${error.message}`, 'error');
+        showToast(`删除失败: ${error.message}`, 'error');
     }
-}
+};
+
+// ===== 环境 CRUD =====
+
+// 添加环境
+document.getElementById('addEnvBtn').addEventListener('click', async () => {
+    const key = document.getElementById('newEnvKey').value.trim().toLowerCase();
+    const name = document.getElementById('newEnvName').value.trim();
+    const slsProjectName = document.getElementById('newEnvSlsId').value.trim();
+
+    if (!key || !name || !slsProjectName) {
+        showToast('⚠️ 环境标识、名称、SLS 项目 ID 都要填哦', 'warning');
+        return;
+    }
+    if (!/^[a-z][a-z0-9_-]*$/.test(key)) {
+        showToast('⚠️ 环境标识需以字母开头，只能含小写字母/数字/_-', 'warning');
+        return;
+    }
+    if ((state.environments || {})[key]) {
+        showToast(`❗ 环境标识「${key}」已存在`, 'warning');
+        return;
+    }
+
+    state.environments = { ...(state.environments || {}), [key]: { name, slsProjectName } };
+    try {
+        await apiRequest('/config', { method: 'POST', body: JSON.stringify({ environments: state.environments }) });
+        document.getElementById('newEnvKey').value = '';
+        document.getElementById('newEnvName').value = '';
+        document.getElementById('newEnvSlsId').value = '';
+        renderEnvironments();
+        updateProjectEnvSelect();
+        showToast(`✅ 环境「${name}」已添加`, 'success');
+    } catch (error) {
+        showToast(`添加环境失败: ${error.message}`, 'error');
+    }
+});
+
+// 编辑环境（inline prompt 两步）
+window.editEnvironment = async function (key) {
+    const env = (state.environments || {})[key];
+    if (!env) return;
+    const newName = prompt('环境显示名称：', env.name);
+    if (newName === null) return;
+    const newSlsId = prompt('SLS 项目 ID：', env.slsProjectName);
+    if (newSlsId === null) return;
+
+    state.environments[key] = { name: newName.trim() || env.name, slsProjectName: newSlsId.trim() || env.slsProjectName };
+    try {
+        await apiRequest('/config', { method: 'POST', body: JSON.stringify({ environments: state.environments }) });
+        renderEnvironments();
+        updateProjectEnvSelect();
+        showToast(`✅ 环境「${state.environments[key].name}」已更新`, 'success');
+    } catch (error) {
+        showToast(`更新环境失败: ${error.message}`, 'error');
+    }
+};
+
+// 删除环境（校验是否被项目引用）
+window.deleteEnvironment = async function (key) {
+    const usedBy = Object.values(state.projects).filter(p => p.envKey === key);
+    if (usedBy.length > 0) {
+        showToast(`❗ 无法删除：仍有 ${usedBy.length} 个项目归属此环境，请先迁移或删除这些项目`, 'error', 5000);
+        return;
+    }
+    if (!confirm(`确定删除环境「${(state.environments[key] || {}).name || key}」吗？`)) return;
+    delete state.environments[key];
+    try {
+        await apiRequest('/config', { method: 'POST', body: JSON.stringify({ environments: state.environments }) });
+        renderEnvironments();
+        updateProjectEnvSelect();
+        showToast('🗑️ 环境已删除', 'success');
+    } catch (error) {
+        showToast(`删除环境失败: ${error.message}`, 'error');
+    }
+};
 
 // ========== 日志分析 ==========
 
@@ -1369,10 +1572,15 @@ function applyPresetTemplate() {
 
 async function loadReports() {
     try {
-        // 先确保项目配置已加载（用于映射项目名称）
+        // 先确保项目配置已加载（用于映射项目名称）；失败则降级，不阻断报告列表
         if (Object.keys(state.projects || {}).length === 0) {
-            const configResponse = await apiRequest('/config');
-            state.projects = configResponse.data.projects || {};
+            try {
+                const configResponse = await apiRequest('/config');
+                state.projects = configResponse.data.projects || {};
+                state.environments = configResponse.data.environments || {};
+            } catch (cfgErr) {
+                console.warn('项目配置加载失败（降级继续）:', cfgErr.message);
+            }
         }
 
         const response = await apiRequest('/reports');
@@ -1381,6 +1589,9 @@ async function loadReports() {
         renderReports();
     } catch (error) {
         console.error('加载报告失败:', error);
+        showToast(`加载报告失败：${error.message}`, 'error');
+        const loading = document.getElementById('reportLoading');
+        if (loading) loading.style.display = 'none';
     }
 }
 

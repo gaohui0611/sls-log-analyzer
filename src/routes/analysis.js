@@ -40,6 +40,14 @@ router.post('/analyze', async (req, res) => {
             return res.status(404).json({ success: false, error: '项目不存在' });
         }
 
+        // 解析真实 SLS 项目ID：优先用环境配置，回退到项目自带 projectName（老数据兼容）
+        const envKey = project.envKey;
+        const envConfig = envKey && (config.environments || {})[envKey];
+        const slsProjectName = (envConfig && envConfig.slsProjectName) || project.projectName;
+        if (!slsProjectName) {
+            return res.status(400).json({ success: false, error: '该项目缺少环境配置（SLS 项目ID），请到项目管理补全' });
+        }
+
         // 验证 SLS 认证状态
         const slsConfig = config.slsConfig || {};
         console.log('[DEBUG] SLS cookies 数量:', Object.keys(slsConfig.cookies || {}).length);
@@ -56,7 +64,7 @@ router.post('/analyze', async (req, res) => {
 
         console.log('[DEBUG] 调用 analyzeLogs...');
         const result = await analyzeLogs({
-            projectName: project.projectName,
+            projectName: slsProjectName,
             logStoreName: project.logStoreName,
             timeRange,
             query,
@@ -95,6 +103,13 @@ router.post('/trace-search', async (req, res) => {
             return res.status(404).json({ success: false, error: '项目不存在' });
         }
 
+        // 解析真实 SLS 项目ID（环境配置优先，回退老字段）
+        const traceEnv = project.envKey && (config.environments || {})[project.envKey];
+        const traceSlsProjectName = (traceEnv && traceEnv.slsProjectName) || project.projectName;
+        if (!traceSlsProjectName) {
+            return res.status(400).json({ success: false, error: '该项目缺少环境配置（SLS 项目ID）' });
+        }
+
         if (!slsConfig.cookies || Object.keys(slsConfig.cookies).length === 0) {
             return res.status(401).json({ success: false, error: 'SLS 认证信息缺失' });
         }
@@ -108,7 +123,7 @@ router.post('/trace-search', async (req, res) => {
 
         const timeInfo = parseTimeRange(timeRange);
         const result = await searchLogsMultiPage({
-            projectName: project.projectName,
+            projectName: traceSlsProjectName,
             logStoreName: project.logStoreName,
             query: traceQuery,
             from: timeInfo.from,

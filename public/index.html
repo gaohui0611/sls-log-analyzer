@@ -1129,8 +1129,9 @@
       font-size: 12px;
     }
 
-    /* ── Toast Notifications ── */
+    /* ── Toast Notifications（居中弹出） ── */
     .toast {
+      width: 100%;
       min-width: 300px;
       background: var(--bg-card);
       border-radius: var(--radius-lg);
@@ -1139,10 +1140,40 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      animation: toastIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
       border: 1px solid var(--border-subtle);
       position: relative;
       overflow: hidden;
+      pointer-events: auto;
+    }
+
+    /* 居中弹出动画：scale + fade */
+    @keyframes toastIn {
+      0% { opacity: 0; transform: scale(0.85) translateY(10px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    /* 错误类：放大 + 红色阴影，最醒目 */
+    .toast.error {
+      border-color: rgba(239, 68, 68, 0.45);
+      border-width: 2px;
+      padding: 20px 24px;
+      box-shadow: 0 12px 40px rgba(239, 68, 68, 0.2);
+    }
+    .toast.error .toast-icon { font-size: 30px; }
+    .toast.error .toast-title { color: var(--accent-red); font-size: 16px; }
+
+    /* 警告类：稍突出 */
+    .toast.warning {
+      border-color: rgba(245, 158, 11, 0.45);
+      border-width: 2px;
+    }
+
+    .toast.removing {
+      animation: toastOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    @keyframes toastOut {
+      to { opacity: 0; transform: scale(0.9) translateY(-10px); }
     }
 
     .toast::before {
@@ -1297,7 +1328,7 @@
           <span class="nav-item-icon">📦</span>
           <span>项目管理</span>
         </div>
-        <div class="nav-item" data-tab="ai">
+        <div class="nav-item" data-tab="ai" style="display:none;" title="暂时隐藏">
           <span class="nav-item-icon">🤖</span>
           <span>AI 配置</span>
         </div>
@@ -1400,26 +1431,55 @@
       <div class="tab-content" id="projects-tab">
         <div class="page-header">
           <h1 class="page-title">项目管理</h1>
-          <p class="page-subtitle">配置需要分析的日志项目</p>
+          <p class="page-subtitle">按环境配置 SLS 项目，项目挂靠环境，避免重复填写环境 ID</p>
         </div>
 
+        <!-- 环境配置区 -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">添加新项目</h3>
+            <h3 class="card-title">🌐 环境配置（SLS 项目 ID）</h3>
+          </div>
+          <p class="form-hint">💡 每个环境只需填一次 SLS 项目 ID（形如 <code>k8s-log-xxx</code>），项目通过所属环境复用。</p>
+          <div class="item-list" id="environmentList" style="margin-bottom: 16px;"></div>
+          <div class="form-row" style="border-top: 1px dashed var(--border-subtle); padding-top: 16px;">
+            <div class="form-group">
+              <label class="form-label">环境标识 (key)</label>
+              <input type="text" class="form-input" id="newEnvKey" placeholder="如 prod / test / pre" style="text-transform: lowercase;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">环境名称</label>
+              <input type="text" class="form-input" id="newEnvName" placeholder="如 生产环境">
+            </div>
+            <div class="form-group" style="flex: 2;">
+              <label class="form-label">SLS 项目 ID</label>
+              <input type="text" class="form-input" id="newEnvSlsId" placeholder="k8s-log-xxxxxxxx">
+            </div>
+            <div class="form-group" style="display:flex; align-items:flex-end;">
+              <button class="btn btn-primary" id="addEnvBtn" style="white-space: nowrap;">➕ 添加环境</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 添加/编辑项目区 -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">📁 项目配置</h3>
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">项目名称</label>
-              <input type="text" class="form-input" id="newProjectName" placeholder="项目显示名称">
+              <label class="form-label">项目名称（显示用）</label>
+              <input type="text" class="form-input" id="newProjectName" placeholder="如 表单引擎">
             </div>
             <div class="form-group">
-              <label class="form-label">环境ID</label>
-              <input type="text" class="form-input" id="newSlsProject" placeholder="阿里云环境ID">
+              <label class="form-label">所属环境</label>
+              <select class="form-select" id="newProjectEnv">
+                <option value="">-- 请选择环境 --</option>
+              </select>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">项目所属</label>
-            <input type="text" class="form-input" id="newLogStore" placeholder="项目所属/名称">
+            <label class="form-label">LogStore 名称</label>
+            <input type="text" class="form-input" id="newLogStore" placeholder="如 prod-bpm-tojoy-form-engine">
           </div>
           <div style="display: flex; gap: 12px;">
             <button class="btn btn-primary" id="addProjectBtn">➕ 添加项目</button>
@@ -1427,11 +1487,12 @@
           </div>
         </div>
 
+        <!-- 已配置项目（按环境分组） -->
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title">已配置项目</h3>
+            <h3 class="card-title">📋 已配置项目（按环境分组）</h3>
           </div>
-          <div class="item-list" id="projectList"></div>
+          <div id="projectList"></div>
         </div>
       </div>
 
@@ -1746,7 +1807,7 @@
   </div>
 
   <!-- Toast 通知容器 -->
-  <div id="toastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 12px; max-width: 400px;"></div>
+  <div id="toastContainer" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 90vw; width: 420px; pointer-events: none;"></div>
 
   <!-- traceId 追踪模态框 -->
   <div class="modal-overlay" id="traceModal">
@@ -1764,6 +1825,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=20260618-dashboard"></script>
+  <script src="/app.js?v=20260618-env"></script>
 </body>
 </html>
