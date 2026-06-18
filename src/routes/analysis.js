@@ -14,7 +14,7 @@ const router = express.Router();
 router.post('/analyze', async (req, res) => {
     try {
         console.log('[DEBUG] 收到分析请求');
-        let { projectId, timeRange, query, size = 100, maxPages = 1, customPrompt = '' } = req.body;
+        let { projectId, timeRange, query, size = 100, maxPages = 1, customPrompt = '', presetTemplate = '' } = req.body;
 
         // 后端兜底：中文引号 → 英文引号，清理多余空格
         if (query) {
@@ -63,7 +63,8 @@ router.post('/analyze', async (req, res) => {
             size,
             maxPages,
             aiConfig: config.aiConfig,
-            customPrompt
+            customPrompt,
+            presetTemplate
         });
         console.log('[DEBUG] 分析完成');
 

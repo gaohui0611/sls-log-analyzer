@@ -28,7 +28,8 @@ export async function analyzeLogs(params) {
         size = 100,
         maxPages = 1,
         aiConfig,
-        customPrompt = ''
+        customPrompt = '',
+        presetTemplate = ''
     } = params;
 
     const searchPhases = [];
@@ -146,6 +147,7 @@ export async function analyzeLogs(params) {
         searchPhases,
         stats,
         aiAnalysis,
+        presetTemplate: presetTemplate || 'custom',
         logs: mergedLogs
     };
 

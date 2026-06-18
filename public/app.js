@@ -123,6 +123,7 @@ document.querySelectorAll('.nav-item').forEach(navItem => {
         // 加载对应标签页的数据
         if (tabName === 'projects') loadProjects();
         if (tabName === 'reports') loadReports();
+        if (tabName === 'dashboard') loadDashboard();
         if (tabName === 'settings') loadAuthStatus();
     });
 });
@@ -346,7 +347,7 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
     try {
         const response = await apiRequest('/analyze', {
             method: 'POST',
-            body: JSON.stringify({ projectId, timeRange, query, size, maxPages, customPrompt })
+            body: JSON.stringify({ projectId, timeRange, query, size, maxPages, customPrompt, presetTemplate: document.getElementById('presetTemplateSelect')?.value || '' })
         });
 
         renderAnalysisResult(response.data);
@@ -1293,6 +1294,77 @@ function loadTemplate() {
     showToast('模板已加载', 'success');
 }
 
+/**
+ * 预设分析模版定义
+ * key 与后端 buildPrompt 的三种模式对齐（business/error/overview），
+ * 额外提供 performance / security 两种扩展模版
+ */
+const PRESET_TEMPLATES = {
+    business: `请按"业务链路分析"模式分析本次日志：
+
+1. **业务链路梳理**: 按时间顺序还原本次请求/操作的完整链路，从入口到出口，标注每个关键步骤（参数接收 → 校验 → 数据查询 → 业务处理 → 结果返回）
+2. **关键数据提取**: 从日志中提取业务关键参数（如 ID、状态码、返回值、SQL 语句等），帮助快速定位业务节点
+3. **业务异常识别**: 识别流程中的异常节点（如查询空结果、参数缺失、权限不足等），即使日志级别不是 ERROR
+4. **关键词优化建议**: 根据日志内容推荐更精准的搜索关键词或组合查询
+5. **关联 TraceID**: 指出哪些 TraceID 代表完整请求链路，建议追踪查看
+
+请以 Markdown 格式输出，优先展示业务流程，再展示异常和建议。`,
+    error: `请按"异常错误分析"模式分析本次日志，重点分析异常：
+
+1. **错误定位**: 列出每个错误/异常的关键信息（类型、时间、影响范围），标注最严重的错误
+2. **根因分析**: 从日志链路推断根本原因，结合 SQL 语句、请求参数、业务上下文等
+3. **链路还原**: 还原出错请求的完整链路（从请求入口到报错点），指出哪个节点开始异常
+4. **影响评估**: 评估错误对业务的影响（哪些用户/数据受影响）
+5. **解决建议**: 提供具体的排查步骤和修复方案
+6. **关键词建议**: 推荐更精准的搜索关键词帮助深入排查
+
+请以 Markdown 格式输出，重点突出错误信息和根因。`,
+    overview: `请按"概览分析"模式分析本次日志：
+
+1. **日志概览**: 日志整体情况、主要级别分布、时间分布特征
+2. **业务特征**: 从日志内容中识别主要业务场景和操作类型
+3. **潜在风险**: 识别可能的性能问题、异常行为或隐患
+4. **关键词建议**: 推荐搜索关键词帮助进一步深入分析
+
+请以 Markdown 格式输出。`,
+    performance: `请按"性能分析"模式分析本次日志，关注性能瓶颈：
+
+1. **慢请求识别**: 找出耗时最长的请求/操作，列出耗时和调用链路
+2. **资源消耗热点**: 分析 SQL 慢查询、重复调用、循环调用等问题
+3. **吞吐量评估**: 按时间维度统计请求量峰值，识别流量异常时段
+4. **根因定位**: 推断性能瓶颈的根本原因（如锁等待、N+1 查询、全表扫描等）
+5. **优化建议**: 给出具体的性能优化方向和措施
+
+请以 Markdown 格式输出，重点突出性能数据。`,
+    security: `请按"安全审计分析"模式分析本次日志，关注安全风险：
+
+1. **可疑行为识别**: 检查是否存在异常登录、越权访问、高频失败尝试等
+2. **敏感数据检查**: 标注日志中泄露的敏感信息（手机号、身份证、密码、Token 等）
+3. **注入/攻击迹象**: 识别 SQL 注入、XSS、命令注入、路径遍历等攻击特征
+4. **影响评估**: 评估潜在安全事件的影响范围
+5. **处置建议**: 给出安全加固和应急响应建议
+
+请以 Markdown 格式输出，重点突出安全风险项。`,
+};
+
+/**
+ * 应用预设分析模版到自定义提示词输入框
+ */
+function applyPresetTemplate() {
+    const select = document.getElementById('presetTemplateSelect');
+    const value = select.value;
+    const textarea = document.getElementById('customPromptInput');
+    if (!value) {
+        // 选回"不使用预设"，清空提示词
+        textarea.value = '';
+        showToast('已清除提示词，将使用系统自动判断模式', 'info');
+        return;
+    }
+    textarea.value = PRESET_TEMPLATES[value] || '';
+    const label = select.options[select.selectedIndex].textContent;
+    showToast(`已应用预设模版：${label}`, 'success');
+}
+
 // ========== 报告列表 ==========
 
 async function loadReports() {
@@ -1842,6 +1914,312 @@ document.getElementById('refreshReports')?.addEventListener('click', async () =>
     }
 });
 
+document.getElementById('refreshDashboard')?.addEventListener('click', async () => {
+    const btn = document.getElementById('refreshDashboard');
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-refresh-icon spinning">🔄</span><span>刷新中...</span>';
+    try {
+        await loadDashboard();
+        showAlert('dashboard-tab', '✅ 仪表盘数据已刷新', 'success');
+    } catch (error) {
+        showAlert('dashboard-tab', `❌ 刷新失败: ${error.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    }
+});
+
+// ========== 数据仪表盘 ==========
+
+/** 仪表盘浅色主题常量（与现有深色 initCharts 区分，surgical 不动旧代码） */
+const DASH_THEME = {
+    textColor: '#5a6b85',
+    gridColor: 'rgba(15,76,159,0.08)',
+    tooltipBg: '#ffffff',
+    tooltipText: '#0f1f3d',
+    tooltipBorder: 'rgba(15,76,159,0.15)',
+    palette: ['#1677ff', '#0a4ec9', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'],
+    levelColors: { ERROR: '#ef4444', WARN: '#f59e0b', INFO: '#1677ff', DEBUG: '#16a34a', TRACE: '#93a1b8' },
+    modeLabels: { business: '业务链路', error: '异常错误', overview: '概览', performance: '性能分析', security: '安全审计', custom: '自定义', unknown: '未标记' }
+};
+
+/**
+ * 加载仪表盘数据并渲染
+ */
+async function loadDashboard() {
+    const loading = document.getElementById('dashboardLoading');
+    const content = document.getElementById('dashboardContent');
+    if (loading) loading.style.display = 'block';
+    if (content) content.style.display = 'none';
+
+    try {
+        const response = await apiRequest('/dashboard');
+        renderDashboard(response.data);
+        if (loading) loading.style.display = 'none';
+        if (content) content.style.display = 'block';
+    } catch (error) {
+        console.error('加载仪表盘失败:', error);
+        if (loading) loading.innerHTML = `<p style="color: var(--accent-red);">❌ 加载失败: ${error.message}</p>`;
+    }
+}
+
+/**
+ * 渲染仪表盘
+ */
+function renderDashboard(data) {
+    // 先 dispose 旧图表实例
+    if (window._chartInstances) {
+        window._chartInstances.forEach(c => { try { c.dispose(); } catch (e) { /* ignore */ } });
+    }
+    window._chartInstances = [];
+
+    if (typeof echarts === 'undefined') {
+        console.warn('[dashboard] ECharts 未加载，跳过图表');
+        return;
+    }
+
+    renderDashboardKpi(data);
+    renderDashboardErrorRanking(data);
+
+    requestAnimationFrame(() => {
+        initDashTrendChart(data);
+        initDashLevelChart(data);
+        initDashProjectChart(data);
+        initDashHourlyChart(data);
+        initDashKeywordChart(data);
+        initDashModeChart(data);
+    });
+}
+
+/**
+ * 渲染 KPI 卡片行
+ */
+function renderDashboardKpi(data) {
+    const s = data.summary;
+    const ai = data.aiCoverage;
+    const kpi = [
+        { label: '报告总数', value: s.reportCount, icon: '📋', color: '#1677ff' },
+        { label: '总日志量', value: s.totalLogs, icon: '📝', color: '#0a4ec9' },
+        { label: '错误 + 告警', value: s.totalErrors + s.totalWarnings, icon: '🚨', color: '#ef4444' },
+        { label: 'AI 分析覆盖率', value: ai.rate + '%', sub: `${ai.analyzed}/${ai.total}`, icon: '🤖', color: '#16a34a' },
+    ];
+    document.getElementById('dashboardKpi').innerHTML = kpi.map(k => `
+        <div class="card" style="padding: 18px 20px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <div style="font-size:12px; color: var(--text-muted); margin-bottom:6px;">${k.label}</div>
+                    <div style="font-size:28px; font-weight:700; color: ${k.color}; line-height:1;">${k.value}</div>
+                    ${k.sub ? `<div style="font-size:11px; color: var(--text-secondary); margin-top:4px;">${k.sub}</div>` : ''}
+                </div>
+                <span style="font-size:26px; opacity:0.5;">${k.icon}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * 渲染错误报告 Top10 排行表
+ */
+function renderDashboardErrorRanking(data) {
+    const ranking = data.errorRanking || [];
+    const container = document.getElementById('dashErrorRanking');
+    if (ranking.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); text-align:center; padding:20px;">暂无错误报告</p>';
+        return;
+    }
+    container.innerHTML = `
+        <table style="width:100%; font-size:13px; border-collapse:collapse;">
+            <thead>
+                <tr style="text-align:left; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle);">
+                    <th style="padding:6px 4px;">项目</th>
+                    <th style="padding:6px 4px;">查询</th>
+                    <th style="padding:6px 4px; text-align:right;">错误</th>
+                    <th style="padding:6px 4px; text-align:right;">告警</th>
+                    <th style="padding:6px 4px;">时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${ranking.map(r => {
+                    const name = (r.projectName || '').replace('k8s-log-', '').slice(0, 12);
+                    const date = (r.createdAt || '').slice(0, 10);
+                    const q = escapeHtml((r.query || '').slice(0, 18));
+                    return `<tr style="border-bottom: 1px solid var(--border-subtle);">
+                        <td style="padding:6px 4px;" title="${escapeHtml(r.projectName||'')}">${escapeHtml(name)}</td>
+                        <td style="padding:6px 4px; color: var(--text-secondary);" title="${escapeHtml(r.query||'')}">${q || '(空)'}</td>
+                        <td style="padding:6px 4px; text-align:right; color: var(--accent-red); font-weight:600;">${r.errorCount}</td>
+                        <td style="padding:6px 4px; text-align:right; color: var(--accent-orange);">${r.warnCount}</td>
+                        <td style="padding:6px 4px; color: var(--text-muted); font-size:12px;">${date}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+/** 通用 tooltip 浅色配置 */
+function dashTooltip(extra = {}) {
+    return {
+        backgroundColor: DASH_THEME.tooltipBg,
+        borderColor: DASH_THEME.tooltipBorder,
+        textStyle: { color: DASH_THEME.tooltipText },
+        ...extra
+    };
+}
+
+/**
+ * 时间趋势折线图
+ */
+function initDashTrendChart(data) {
+    const el = document.getElementById('dashTrendChart');
+    if (!el) return;
+    const trend = data.timeTrend || [];
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+    chart.setOption({
+        tooltip: dashTooltip({ trigger: 'axis' }),
+        legend: { data: ['报告数', '错误报告数'], textStyle: { color: DASH_THEME.textColor }, top: 0 },
+        grid: { left: 40, right: 20, top: 35, bottom: 30 },
+        xAxis: { type: 'category', data: trend.map(t => t.date.slice(5)), axisLabel: { color: DASH_THEME.textColor } },
+        yAxis: { type: 'value', axisLabel: { color: DASH_THEME.textColor }, splitLine: { lineStyle: { color: DASH_THEME.gridColor } } },
+        series: [
+            { name: '报告数', type: 'line', smooth: true, data: trend.map(t => t.reportCount), itemStyle: { color: '#1677ff' }, areaStyle: { color: 'rgba(22,119,255,0.1)' } },
+            { name: '错误报告数', type: 'line', smooth: true, data: trend.map(t => t.errorReportCount), itemStyle: { color: '#ef4444' } }
+        ]
+    });
+}
+
+/**
+ * 级别分布饼图
+ */
+function initDashLevelChart(data) {
+    const el = document.getElementById('dashLevelChart');
+    if (!el) return;
+    const dist = data.levelDistribution || {};
+    const chartData = Object.entries(dist).map(([name, value]) => ({ name, value }));
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+    chart.setOption({
+        tooltip: dashTooltip({ trigger: 'item', formatter: '{b}: {c} ({d}%)' }),
+        series: [{
+            type: 'pie', radius: ['45%', '72%'], center: ['50%', '52%'],
+            label: { color: DASH_THEME.textColor, formatter: '{b}\n{d}%' },
+            itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+            data: chartData.map(d => ({ ...d, itemStyle: { color: DASH_THEME.levelColors[d.name] || '#93a1b8' } }))
+        }]
+    });
+}
+
+/**
+ * 项目对比双轴柱状
+ */
+function initDashProjectChart(data) {
+    const el = document.getElementById('dashProjectChart');
+    if (!el) return;
+    const projects = (data.byProject || []).slice(0, 10);
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+    chart.setOption({
+        tooltip: dashTooltip({ trigger: 'axis', axisPointer: { type: 'shadow' } }),
+        legend: { data: ['报告数', '错误率%'], textStyle: { color: DASH_THEME.textColor }, top: 0 },
+        grid: { left: 45, right: 50, top: 35, bottom: 70 },
+        xAxis: {
+            type: 'category', data: projects.map(p => p.name.replace('k8s-log-', '').slice(0, 10)),
+            axisLabel: { color: DASH_THEME.textColor, rotate: 35, interval: 0 }
+        },
+        yAxis: [
+            { type: 'value', name: '报告数', nameTextStyle: { color: DASH_THEME.textColor }, axisLabel: { color: DASH_THEME.textColor }, splitLine: { lineStyle: { color: DASH_THEME.gridColor } } },
+            { type: 'value', name: '错误率%', nameTextStyle: { color: DASH_THEME.textColor }, axisLabel: { color: DASH_THEME.textColor, formatter: '{value}%' }, splitLine: { show: false } }
+        ],
+        series: [
+            { name: '报告数', type: 'bar', data: projects.map(p => p.reportCount), itemStyle: { color: '#1677ff', borderRadius: [4, 4, 0, 0] } },
+            { name: '错误率%', type: 'line', yAxisIndex: 1, data: projects.map(p => p.errorRate), itemStyle: { color: '#ef4444' }, smooth: true }
+        ]
+    });
+}
+
+/**
+ * 24 小时时段柱状
+ */
+function initDashHourlyChart(data) {
+    const el = document.getElementById('dashHourlyChart');
+    if (!el) return;
+    const hourly = data.hourlyDistribution || new Array(24).fill(0);
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+    const max = Math.max(...hourly);
+    chart.setOption({
+        tooltip: dashTooltip({ trigger: 'axis', formatter: p => `${p[0].name}时<br/>日志量: ${p[0].value}` }),
+        grid: { left: 45, right: 15, top: 20, bottom: 30 },
+        xAxis: { type: 'category', data: hourly.map((_, i) => i), axisLabel: { color: DASH_THEME.textColor } },
+        yAxis: { type: 'value', axisLabel: { color: DASH_THEME.textColor }, splitLine: { lineStyle: { color: DASH_THEME.gridColor } } },
+        series: [{
+            type: 'bar', data: hourly.map(v => ({
+                value: v,
+                itemStyle: { color: v >= max * 0.8 ? '#ef4444' : '#1677ff', borderRadius: [4, 4, 0, 0] }
+            }))
+        }]
+    });
+}
+
+/**
+ * 关键词云（ECharts 内置，无需额外扩展）
+ */
+function initDashKeywordChart(data) {
+    const el = document.getElementById('dashKeywordChart');
+    if (!el) return;
+    const words = (data.keywordCloud || []).slice(0, 40);
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+
+    // ECharts 5 内置 graph 关键词云布局（不依赖 wordcloud 扩展）
+    const maxValue = Math.max(...words.map(w => w.value), 1);
+    const positions = [];
+    const width = el.offsetWidth || 800;
+    const height = 300;
+    words.forEach((w, i) => {
+        const angle = (i * 137.5) * Math.PI / 180; // 黄金角螺旋布局
+        const radius = Math.sqrt(i) * 28;
+        positions.push({
+            value: w.value,
+            name: w.name,
+            x: width / 2 + Math.cos(angle) * radius,
+            y: height / 2 + Math.sin(angle) * radius,
+            symbolSize: 14 + (w.value / maxValue) * 40
+        });
+    });
+    chart.setOption({
+        tooltip: dashTooltip({ formatter: p => `${p.data.name}<br/>出现: ${p.data.value}` }),
+        series: [{
+            type: 'graph', layout: 'none', roam: false,
+            label: { show: true, color: '#1677ff', fontWeight: 'bold' },
+            data: positions,
+            links: []
+        }]
+    });
+}
+
+/**
+ * AI 分析模式分布饼图
+ */
+function initDashModeChart(data) {
+    const el = document.getElementById('dashModeChart');
+    if (!el) return;
+    const mode = data.analysisMode || {};
+    const chartData = Object.entries(mode).map(([k, v]) => ({ name: DASH_THEME.modeLabels[k] || k, value: v }));
+    const chart = echarts.init(el);
+    window._chartInstances.push(chart);
+    chart.setOption({
+        tooltip: dashTooltip({ trigger: 'item', formatter: '{b}: {c} ({d}%)' }),
+        series: [{
+            type: 'pie', radius: ['40%', '68%'], center: ['50%', '52%'],
+            label: { color: DASH_THEME.textColor, formatter: '{b}\n{d}%' },
+            itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+            data: chartData.map((d, i) => ({ ...d, itemStyle: { color: DASH_THEME.palette[i % DASH_THEME.palette.length] } }))
+        }]
+    });
+}
+
 // ========== 认证设置 ==========
 
 async function loadAuthStatus() {
@@ -1937,25 +2315,27 @@ function generateBookmarkletCode() {
     return `javascript:(function(){` +
         // 域名校验
         `if(!location.hostname.includes('aliyun.com')){alert('❌ 请在阿里云 SLS 控制台页面 (sls.console.aliyun.com) 使用此书签！\\n\\n当前页面: '+location.hostname);return;}` +
-        // 提取 cookies (document.cookie 无法获取 HttpOnly，但至少获取能拿到的)
-        `var cookies={};` +
-        `document.cookie.split(';').forEach(function(c){var parts=c.trim().split('=');if(parts[0])cookies[parts[0]]=decodeURIComponent(parts[1]||'')||'';});` +
-        // 提取 CSRF/b3 — 多种来源
+        // 只抓 CSRF token / b3（这些值在页面内存里，磁盘读不到；cookies 由后端从磁盘自动读取）
         `var csrfToken=document.querySelector('meta[name=csrf-token]')?.content||window.__CONTEXT__?.csrfToken||window.CSRF_TOKEN||window.csrfToken||null;` +
         `var b3=document.querySelector('meta[name=b3]')?.content||window.__CONTEXT__?.b3||window.B3||window.b3||null;` +
-        // 拦截 XHR setRequestHeader 获取 CSRF/b3 (捕获不到 Cookie，因为是浏览器自动加的)
-        `var _origOpen=XMLHttpRequest.prototype.open;` +
-        `XMLHttpRequest.prototype.open=function(){this._reqHeaders={};return _origOpen.apply(this,arguments);};` +
-        `var _origSetReq=XMLHttpRequest.prototype.setRequestHeader;` +
-        `XMLHttpRequest.prototype.setRequestHeader=function(k,v){this._reqHeaders[k]=v;if(k.toLowerCase()==='x-csrf-token'&&!csrfToken)csrfToken=v;if(k.toLowerCase()==='b3'&&!b3)b3=v;return _origSetReq.apply(this,arguments);};` +
-        // 发送到服务器
-        `fetch('${baseUrl}/api/bookmark-sync',{` +
-            `method:'POST',` +
-            `headers:{'Content-Type':'application/json'},` +
-            `body:JSON.stringify({cookies:cookies,url:location.href,referrer:document.referrer,csrfToken:csrfToken,b3:b3})` +
-        `}).then(function(r){return r.json();}).then(function(data){` +
-            `alert(data.success?(data.valid?'✅ 同步成功！认证有效':'⚠️ 已同步 '+Object.keys(cookies).length+' 个 Cookie，但验证未通过。\\n\\n可能原因：关键认证 Cookie 为 HttpOnly，JS 无法读取。\\n\\n解决办法：使用 cURL 方式（在 DevTools Network 面板复制 getLogs.json 请求）'):'❌ 同步失败：'+(data.error||'未知错误'));` +
-        `}).catch(function(e){alert('❌ 请求失败：'+e.message);});` +
+        // 拦截 XHR setRequestHeader 兜底抓取（页面尚未发请求时 meta/变量可能为空）
+        `var done=false;` +
+        `function send(){if(done)return;done=true;` +
+            `fetch('${baseUrl}/api/bookmark-sync',{` +
+                `method:'POST',` +
+                `headers:{'Content-Type':'application/json'},` +
+                `body:JSON.stringify({url:location.href,csrfToken:csrfToken,b3:b3})` +
+            `}).then(function(r){return r.json();}).then(function(data){` +
+                `alert(data.success?(data.valid?'✅ 同步成功！认证有效（已自动读取浏览器 cookies + 抓取 CSRF Token）':'⚠️ 已抓取 CSRF Token，但验证未通过。\\n\\n可能 token 已过期，请刷新 SLS 页面后重新点击书签。'):'❌ 同步失败：'+(data.error||'未知错误'));` +
+            `}).catch(function(e){alert('❌ 请求失败：'+e.message);});` +
+        `}` +
+        // 若已抓到 token 立即发送；否则 hook XHR，等下一次请求触发时抓 header 再发
+        `if(csrfToken||b3){send();}` +
+        `else{` +
+            `var _origSetReq=XMLHttpRequest.prototype.setRequestHeader;` +
+            `XMLHttpRequest.prototype.setRequestHeader=function(k,v){if(k.toLowerCase()==='x-csrf-token'&&!csrfToken)csrfToken=v;if(k.toLowerCase()==='b3'&&!b3)b3=v;if((csrfToken||b3)&&!done){send();}return _origSetReq.apply(this,arguments);};` +
+            `alert('⏳ 正在等待页面请求...\\n如长时间无响应，请在 SLS 控制台进行一次查询操作（如点搜索）以触发请求。');` +
+        `}` +
     `})();`;
 }
 
@@ -2159,6 +2539,13 @@ async function init() {
 
         // 初始化模板选择器
         renderTemplateSelect();
+
+        // 支持通过 URL hash 直达指定 tab（如 #dashboard）
+        const hashTab = location.hash.slice(1);
+        if (hashTab) {
+            const navTarget = document.querySelector(`.nav-item[data-tab="${hashTab}"]`);
+            if (navTarget) navTarget.click();
+        }
     } catch (error) {
         console.error('初始化失败:', error);
     }
