@@ -19,6 +19,10 @@ const PORT = process.env.PORT || 3000;
 const REPORTS_DIR = path.join(process.cwd(), 'reports');
 await fs.mkdir(REPORTS_DIR, { recursive: true });
 
+// 初始化 SQLite（建表 + 历史报告迁移）
+import { initDb } from './utils/db.js';
+await initDb();
+
 // 中间件
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

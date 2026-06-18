@@ -2,16 +2,13 @@
  * 日志分析器
  */
 
-import fs from 'fs/promises';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { callAI } from './aiService.js';
 import { searchLogsMultiPage } from './slsClient.js';
 import { parseTimeRange } from './timeParser.js';
 
 import { readConfig } from '../utils/config.js';
-
-const REPORTS_DIR = path.join(process.cwd(), 'reports');
+import { saveReport as saveReportToDb } from '../utils/db.js';
 
 /**
  * 分析日志 — 多阶段流水线
@@ -151,14 +148,8 @@ export async function analyzeLogs(params) {
         logs: mergedLogs
     };
 
-    // 确保报告目录存在
-    await fs.mkdir(REPORTS_DIR, { recursive: true });
-
-    await fs.writeFile(
-        path.join(REPORTS_DIR, `${report.id}.json`),
-        JSON.stringify(report, null, 2),
-        'utf-8'
-    );
+    // 落库（reports + report_logs），替代原 JSON 文件存储
+    saveReportToDb(report);
 
     return report;
 }
@@ -245,6 +236,26 @@ function analyzeStats(logs) {
         if (!b.time) return -1;
         return new Date(b.time) - new Date(a.time);
     });
+
+    // 兜底：若没有异常/堆栈日志（常见于 traceId 链路追踪的全 INFO 正常链路），
+    // 从日志里按时间均匀抽取代表性样本补入重点日志，避免该区空白
+    if (keyLogs.length === 0 && logs.length > 0) {
+        const byTime = [...logs].sort((a, b) => (a.__time__ || 0) - (b.__time__ || 0));
+        const sampleStep = Math.max(1, Math.floor(byTime.length / 5));
+        for (let i = 0; i < byTime.length && keyLogs.length < 5; i += sampleStep) {
+            const log = byTime[i];
+            const message = log.content || log.message || log.msg || '';
+            const traceId = extractTraceId(log, message);
+            if (!traceId && keyLogs.length >= 3) continue; // 优先保留含 traceId 的样本
+            keyLogs.push({
+                time: log.__time__ ? new Date(log.__time__ * 1000).toISOString() : null,
+                level: (log.level || log.LEVEL || 'INFO').toUpperCase(),
+                message, traceId,
+                userId: log.userId || log.user_id || '',
+                reason: '链路日志样本'
+            });
+        }
+    }
 
     return {
         total: logs.length,

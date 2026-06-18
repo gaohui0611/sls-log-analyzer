@@ -23,6 +23,12 @@ Thumbs.db
 # Reports (contains sensitive data)
 reports/
 
+# SQLite database (contains sensitive log data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Temporary files
 excalidraw.log
 *.tmp
